@@ -11,69 +11,72 @@ import (
 	"github.com/zqzqsb/gosql/internal/config"
 )
 
-// OpenAIClient 表示OpenAI API客户端
-type OpenAIClient struct {
-	apiKey    string
-	baseURL   string
-	client    *http.Client
-	modelName string
+// AzureClient 表示Azure OpenAI API客户端
+type AzureClient struct {
+	apiKey       string
+	endpoint     string
+	deploymentID string
+	apiVersion   string
+	client       *http.Client
+	modelName    string
 }
 
-// NewOpenAIClient 创建一个新的OpenAI API客户端
-func NewOpenAIClient(cfg *config.OpenAIConfig, modelName string) *OpenAIClient {
+// NewAzureClient 创建一个新的Azure OpenAI API客户端
+func NewAzureClient(cfg *config.AzureConfig, modelName string) *AzureClient {
 	if modelName == "" {
-		modelName = "gpt-3.5-turbo"
+		modelName = cfg.DeploymentID
 	}
 	
-	return &OpenAIClient{
-		apiKey:    cfg.APIKey,
-		baseURL:   cfg.BaseURL,
-		client:    &http.Client{},
-		modelName: modelName,
+	return &AzureClient{
+		apiKey:       cfg.APIKey,
+		endpoint:     cfg.Endpoint,
+		deploymentID: cfg.DeploymentID,
+		apiVersion:   cfg.APIVersion,
+		client:       &http.Client{},
+		modelName:    modelName,
 	}
 }
 
-// chatCompletionRequest 表示聊天完成请求
-type chatCompletionRequest struct {
-	Model       string    `json:"model"`
+// azureChatCompletionRequest 表示Azure聊天完成请求
+type azureChatCompletionRequest struct {
 	Messages    []Message `json:"messages"`
 	Temperature float64   `json:"temperature"`
 	MaxTokens   int       `json:"max_tokens"`
 	N           int       `json:"n,omitempty"`
 }
 
-// chatCompletionChoice 表示聊天完成的选择
-type chatCompletionChoice struct {
+// azureChatCompletionChoice 表示Azure聊天完成的选择
+type azureChatCompletionChoice struct {
 	Message struct {
 		Content string `json:"content"`
 	} `json:"message"`
 }
 
-// chatCompletionUsage 表示聊天完成的使用情况
-type chatCompletionUsage struct {
+// azureChatCompletionUsage 表示Azure聊天完成的使用情况
+type azureChatCompletionUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 }
 
-// chatCompletionResponse 表示聊天完成响应
-type chatCompletionResponse struct {
-	Choices []chatCompletionChoice `json:"choices"`
-	Usage   chatCompletionUsage    `json:"usage"`
+// azureChatCompletionResponse 表示Azure聊天完成响应
+type azureChatCompletionResponse struct {
+	Choices []azureChatCompletionChoice `json:"choices"`
+	Usage   azureChatCompletionUsage    `json:"usage"`
 }
 
 // Provider 返回提供商类型
-func (c *OpenAIClient) Provider() Provider {
-	return ProviderOpenAI
+func (c *AzureClient) Provider() Provider {
+	return ProviderAzure
 }
 
 // ModelName 返回模型名称
-func (c *OpenAIClient) ModelName() string {
+func (c *AzureClient) ModelName() string {
 	return c.modelName
 }
 
 // GenerateSQL 生成SQL查询
-func (c *OpenAIClient) GenerateSQL(prompt string, options Options) (*SQLResponse, error) {
+func (c *AzureClient) GenerateSQL(prompt string, options Options) (*SQLResponse, error) {
 	// 构建系统消息
 	systemMessage := options.SystemPrompt
 	if systemMessage == "" {
@@ -124,7 +127,7 @@ func (c *OpenAIClient) GenerateSQL(prompt string, options Options) (*SQLResponse
 }
 
 // GenerateText 生成文本
-func (c *OpenAIClient) GenerateText(prompt string, options Options) (string, error) {
+func (c *AzureClient) GenerateText(prompt string, options Options) (string, error) {
 	messages := []Message{
 		{Role: "user", Content: prompt},
 	}
@@ -142,7 +145,7 @@ func (c *OpenAIClient) GenerateText(prompt string, options Options) (string, err
 }
 
 // Chat 进行对话
-func (c *OpenAIClient) Chat(messages []Message, options Options) (string, error) {
+func (c *AzureClient) Chat(messages []Message, options Options) (string, error) {
 	content, err := c.sendChatRequest(messages, options)
 	if err != nil {
 		return "", err
@@ -152,7 +155,7 @@ func (c *OpenAIClient) Chat(messages []Message, options Options) (string, error)
 }
 
 // chatResponse 表示聊天响应
-type chatResponse struct {
+type azureChatResponse struct {
 	Content       string
 	PromptTokens  int
 	ResponseTokens int
@@ -160,9 +163,8 @@ type chatResponse struct {
 }
 
 // sendChatRequest 发送聊天请求
-func (c *OpenAIClient) sendChatRequest(messages []Message, options Options) (*chatResponse, error) {
-	reqBody := chatCompletionRequest{
-		Model:       c.modelName,
+func (c *AzureClient) sendChatRequest(messages []Message, options Options) (*azureChatResponse, error) {
+	reqBody := azureChatCompletionRequest{
 		Messages:    messages,
 		Temperature: options.Temperature,
 		MaxTokens:   options.MaxTokens,
@@ -173,15 +175,19 @@ func (c *OpenAIClient) sendChatRequest(messages []Message, options Options) (*ch
 		return nil, fmt.Errorf("序列化请求失败: %w", err)
 	}
 
+	// 构建Azure OpenAI API URL
+	url := fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s", 
+		c.endpoint, c.deploymentID, c.apiVersion)
+
 	// 创建HTTP请求
-	req, err := http.NewRequest("POST", c.baseURL+"/chat/completions", bytes.NewBuffer(reqJSON))
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(reqJSON))
 	if err != nil {
 		return nil, fmt.Errorf("创建HTTP请求失败: %w", err)
 	}
 
 	// 设置请求头
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("api-key", c.apiKey)
 
 	// 发送请求
 	resp, err := c.client.Do(req)
@@ -202,7 +208,7 @@ func (c *OpenAIClient) sendChatRequest(messages []Message, options Options) (*ch
 	}
 
 	// 解析响应
-	var completionResp chatCompletionResponse
+	var completionResp azureChatCompletionResponse
 	if err := json.Unmarshal(body, &completionResp); err != nil {
 		return nil, fmt.Errorf("解析响应失败: %w", err)
 	}
@@ -212,68 +218,10 @@ func (c *OpenAIClient) sendChatRequest(messages []Message, options Options) (*ch
 	}
 
 	// 返回响应内容
-	return &chatResponse{
+	return &azureChatResponse{
 		Content:       completionResp.Choices[0].Message.Content,
 		PromptTokens:  completionResp.Usage.PromptTokens,
 		ResponseTokens: completionResp.Usage.CompletionTokens,
 		TotalTokens:   completionResp.Usage.TotalTokens,
 	}, nil
-}
-
-// extractSQLFromThinking 从思考过程中提取SQL
-func extractSQLFromThinking(content string) []string {
-	// 按行分割
-	lines := strings.Split(content, "\n")
-	var result []string
-	var currentBlock string
-	
-	for _, line := range lines {
-		trimmedLine := strings.TrimSpace(line)
-		
-		// 检查是否是SQL语句
-		if strings.HasPrefix(strings.ToUpper(trimmedLine), "SELECT") ||
-		   strings.HasPrefix(strings.ToUpper(trimmedLine), "INSERT") ||
-		   strings.HasPrefix(strings.ToUpper(trimmedLine), "UPDATE") ||
-		   strings.HasPrefix(strings.ToUpper(trimmedLine), "DELETE") ||
-		   strings.HasPrefix(strings.ToUpper(trimmedLine), "CREATE") ||
-		   strings.HasPrefix(strings.ToUpper(trimmedLine), "DROP") ||
-		   strings.HasPrefix(strings.ToUpper(trimmedLine), "ALTER") {
-			// 如果当前块不为空，添加到结果
-			if currentBlock != "" {
-				result = append(result, currentBlock)
-				currentBlock = ""
-			}
-			// 添加SQL语句
-			result = append(result, trimmedLine)
-		} else if trimmedLine != "" {
-			// 如果不是SQL语句且不为空，添加到当前块
-			if currentBlock != "" {
-				currentBlock += "\n"
-			}
-			currentBlock += line
-		}
-	}
-	
-	// 如果最后还有未添加的块，添加到结果
-	if currentBlock != "" {
-		result = append(result, currentBlock)
-	}
-	
-	return result
-}
-
-// processSQLFormat 处理SQL格式
-func processSQLFormat(sql string) string {
-	// 移除多余的引号
-	sql = strings.Trim(sql, "\"'`")
-	
-	// 如果SQL不以分号结尾，添加分号
-	if !strings.HasSuffix(sql, ";") {
-		sql += ";"
-	}
-	
-	// 移除多余的空白字符
-	sql = strings.TrimSpace(sql)
-	
-	return sql
 }

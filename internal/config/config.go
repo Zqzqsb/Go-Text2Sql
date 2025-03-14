@@ -9,10 +9,21 @@ import (
 
 // Config 表示应用程序的配置
 type Config struct {
-	OpenAI  OpenAIConfig  `yaml:"openai"`
-	Model   ModelConfig   `yaml:"model"`
-	Eval    EvalConfig    `yaml:"eval"`
-	Dataset DatasetConfig `yaml:"dataset"`
+	LLM      LLMConfig     `yaml:"llm"`
+	Eval     EvalConfig    `yaml:"eval"`
+	Dataset  DatasetConfig `yaml:"dataset"`
+}
+
+// LLMConfig 表示大语言模型的配置
+type LLMConfig struct {
+	Provider    string        `yaml:"provider"`
+	Model       string        `yaml:"model"`
+	Temperature float64       `yaml:"temperature"`
+	MaxTokens   int           `yaml:"max_tokens"`
+	OpenAI      OpenAIConfig  `yaml:"openai"`
+	Azure       AzureConfig   `yaml:"azure"`
+	Gemini      GeminiConfig  `yaml:"gemini"`
+	Local       LocalConfig   `yaml:"local"`
 }
 
 // OpenAIConfig 表示OpenAI API的配置
@@ -21,11 +32,24 @@ type OpenAIConfig struct {
 	BaseURL string `yaml:"base_url"`
 }
 
-// ModelConfig 表示模型的配置
-type ModelConfig struct {
-	Name        string  `yaml:"name"`
-	Temperature float64 `yaml:"temperature"`
-	MaxTokens   int     `yaml:"max_tokens"`
+// AzureConfig 表示Azure OpenAI API的配置
+type AzureConfig struct {
+	APIKey       string `yaml:"api_key"`
+	Endpoint     string `yaml:"endpoint"`
+	DeploymentID string `yaml:"deployment_id"`
+	APIVersion   string `yaml:"api_version"`
+}
+
+// GeminiConfig 表示Google Gemini API的配置
+type GeminiConfig struct {
+	APIKey  string `yaml:"api_key"`
+	BaseURL string `yaml:"base_url"`
+}
+
+// LocalConfig 表示本地模型的配置
+type LocalConfig struct {
+	Endpoint string `yaml:"endpoint"`
+	ModelPath string `yaml:"model_path"`
 }
 
 // EvalConfig 表示评估的配置
