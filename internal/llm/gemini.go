@@ -91,9 +91,9 @@ func (c *GeminiClient) GenerateSQL(prompt string, options Options) (*SQLResponse
 	systemMessage := options.SystemPrompt
 	if systemMessage == "" {
 		if options.DisableThinking {
-			systemMessage = "请直接回答问题，只输出SQL语句，不要给出任何思考过程或解释。SQL语句应以分号结尾，并且不要包含任何其他文本或代码块标记。重要：不要翻译或转换任何中文词汇（如地名、国家名等）为英文，保持原始中文词汇不变。例如，'法国'应保持为'法国'而不是'France'。"
+			systemMessage = "请直接回答问题，只输出SQL语句，不要给出任何思考过程或解释。SQL语句应以分号结尾，并且不要包含任何其他文本或代码块标记。重要：不要翻译或转换任何中文词汇（如地名、国家名等）为英文，保持原始中文词汇不变。特别是在WHERE条件中的值，必须保持原始中文。例如，WHERE Country = '法国' 不应转换为 WHERE Country = 'France'。"
 		} else {
-			systemMessage = "请详细解释你的思考过程，然后给出最终的SQL查询。确保最终的SQL查询是单独一行，以分号结尾。重要：不要翻译或转换任何中文词汇（如地名、国家名等）为英文，保持原始中文词汇不变。例如，'法国'应保持为'法国'而不是'France'。"
+			systemMessage = "请详细解释你的思考过程，然后给出最终的SQL查询。确保最终的SQL查询是单独一行，以分号结尾。重要：不要翻译或转换任何中文词汇（如地名、国家名等）为英文，保持原始中文词汇不变。特别是在WHERE条件中的值，必须保持原始中文。例如，WHERE Country = '法国' 不应转换为 WHERE Country = 'France'。"
 		}
 	}
 	
