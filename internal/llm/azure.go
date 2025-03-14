@@ -90,6 +90,8 @@ func (c *AzureClient) GenerateSQL(prompt string, options Options) (*SQLResponse,
 	// 添加保留中文词汇的指令
 	if options.PreserveChineseTerms {
 		systemMessage += " 重要：不要翻译或转换任何中文词汇（如地名、国家名等）为英文，保持原始中文词汇不变。特别是在WHERE条件中的值，必须保持原始中文。例如，WHERE Country = '法国' 不应转换为 WHERE Country = 'France'。"
+	} else {
+		systemMessage += " 重要：将所有中文地名、国家名和人名翻译为英文，并确保它们以大写字母开头。例如，WHERE Country = '法国' 应转换为 WHERE Country = 'France'。"
 	}
 
 	// 构建请求
