@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -38,10 +39,15 @@ type DatabaseSchema struct {
 
 // LoadSchema 从指定的路径加载数据库Schema
 func LoadSchema(dbPath string) (*DatabaseSchema, error) {
-	// 读取Schema文件
+	// 首先尝试读取schema.json文件
 	schemaPath := filepath.Join(dbPath, "schema.json")
 	data, err := os.ReadFile(schemaPath)
-	if err != nil {
+	
+	// 如果schema.json不存在，尝试读取schema.sql文件
+	if os.IsNotExist(err) {
+		sqlSchemaPath := filepath.Join(dbPath, "schema.sql")
+		return LoadSchemaFromSQL(sqlSchemaPath)
+	} else if err != nil {
 		return nil, fmt.Errorf("读取Schema文件失败: %w", err)
 	}
 
@@ -52,6 +58,105 @@ func LoadSchema(dbPath string) (*DatabaseSchema, error) {
 	}
 
 	return &schema, nil
+}
+
+// LoadSchemaFromSQL 从SQL文件加载数据库Schema
+func LoadSchemaFromSQL(sqlFilePath string) (*DatabaseSchema, error) {
+	// 读取SQL文件
+	data, err := os.ReadFile(sqlFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("读取SQL Schema文件失败: %w", err)
+	}
+	
+	sqlContent := string(data)
+	
+	// 创建Schema对象
+	schema := &DatabaseSchema{
+		Tables:      []Table{},
+		ForeignKeys: []ForeignKey{},
+	}
+	
+	// 解析CREATE TABLE语句
+	tableRegex := regexp.MustCompile(`(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["']?(\w+)["']?\s*\(([\s\S]*?)\);`)
+	tableMatches := tableRegex.FindAllStringSubmatch(sqlContent, -1)
+	
+	for _, match := range tableMatches {
+		if len(match) < 3 {
+			continue
+		}
+		
+		tableName := match[1]
+		columnsDef := match[2]
+		
+		// 创建表对象
+		table := Table{
+			Name:    tableName,
+			Columns: []Column{},
+		}
+		
+		// 解析列定义
+		columnRegex := regexp.MustCompile(`(?i)["']?(\w+)["']?\s+(\w+)(?:\s+PRIMARY\s+KEY\s*)?`)
+		columnMatches := columnRegex.FindAllStringSubmatch(columnsDef, -1)
+		
+		for _, colMatch := range columnMatches {
+			if len(colMatch) < 3 {
+				continue
+			}
+			
+			colName := colMatch[1]
+			colType := colMatch[2]
+			
+			// 检查是否为主键
+			isPrimary := strings.Contains(strings.ToUpper(colMatch[0]), "PRIMARY KEY")
+			
+			// 添加列
+			column := Column{
+				Name:      colName,
+				Type:      colType,
+				IsPrimary: isPrimary,
+				IsForeign: false, // 稍后处理外键
+			}
+			
+			table.Columns = append(table.Columns, column)
+		}
+		
+		// 解析外键
+		fkRegex := regexp.MustCompile(`(?i)FOREIGN\s+KEY\s*\(\s*["']?(\w+)["']?\s*\)\s*REFERENCES\s+["']?(\w+)["']?\s*\(\s*["']?(\w+)["']?\s*\)`)
+		fkMatches := fkRegex.FindAllStringSubmatch(columnsDef, -1)
+		
+		for _, fkMatch := range fkMatches {
+			if len(fkMatch) < 4 {
+				continue
+			}
+			
+			sourceColumn := fkMatch[1]
+			targetTable := fkMatch[2]
+			targetColumn := fkMatch[3]
+			
+			// 添加外键关系
+			foreignKey := ForeignKey{
+				SourceTable:  tableName,
+				SourceColumn: sourceColumn,
+				TargetTable:  targetTable,
+				TargetColumn: targetColumn,
+			}
+			
+			schema.ForeignKeys = append(schema.ForeignKeys, foreignKey)
+			
+			// 标记列为外键
+			for i, col := range table.Columns {
+				if col.Name == sourceColumn {
+					col.IsForeign = true
+					table.Columns[i] = col
+					break
+				}
+			}
+		}
+		
+		schema.Tables = append(schema.Tables, table)
+	}
+	
+	return schema, nil
 }
 
 // FormatSchemaForPrompt 将Schema格式化为Prompt
