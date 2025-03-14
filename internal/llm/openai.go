@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/zqzqsb/gosql/internal/config"
@@ -17,6 +18,7 @@ type OpenAIClient struct {
 	baseURL   string
 	client    *http.Client
 	modelName string
+	modelConfig ModelConfig
 }
 
 // NewOpenAIClient 创建一个新的OpenAI API客户端
@@ -30,6 +32,7 @@ func NewOpenAIClient(cfg *config.OpenAIConfig, modelName string) *OpenAIClient {
 		baseURL:   cfg.BaseURL,
 		client:    &http.Client{},
 		modelName: modelName,
+		modelConfig: GetModelConfig(modelName),
 	}
 }
 
@@ -74,12 +77,19 @@ func (c *OpenAIClient) ModelName() string {
 
 // GenerateSQL 生成SQL查询
 func (c *OpenAIClient) GenerateSQL(prompt string, options Options) (*SQLResponse, error) {
+	// 根据模型配置决定是否启用思考过程
+	disableThinking := options.DisableThinking
+	if !c.modelConfig.CanThink {
+		disableThinking = true
+	}
+	
 	// 构建系统消息
 	systemMessage := options.SystemPrompt
 	if systemMessage == "" {
-		systemMessage = "请详细解释你的思考过程，然后给出最终的SQL查询。确保最终的SQL查询是单独一行，以分号结尾。"
-		if options.DisableThinking {
-			systemMessage = "请回答问题，不要给出思考过程或解释。所有SQL内容都应以;结尾"
+		if disableThinking {
+			systemMessage = "请直接回答问题，只输出SQL语句，不要给出任何思考过程或解释。SQL语句应以分号结尾，并且不要包含任何其他文本或代码块标记。"
+		} else {
+			systemMessage = "请详细解释你的思考过程，然后给出最终的SQL查询。确保最终的SQL查询是单独一行，以分号结尾。"
 		}
 	}
 
@@ -98,28 +108,37 @@ func (c *OpenAIClient) GenerateSQL(prompt string, options Options) (*SQLResponse
 	// 处理思考过程和SQL
 	var sqlResponse SQLResponse
 	
-	if !options.DisableThinking {
-		// 如果启用了思考过程，尝试分离思考过程和SQL
+	if !disableThinking {
+		// 提取思考过程和SQL
 		parts := extractSQLFromThinking(content.Content)
-		if len(parts) > 0 {
-			sqlResponse.Response = parts[len(parts)-1]
-			sqlResponse.Thinking = strings.Join(parts[:len(parts)-1], "\n")
-		} else {
-			sqlResponse.Response = content.Content
+		if len(parts) > 1 {
+			// 最后一部分是SQL，其他部分是思考过程
+			sqlResponse.Thinking = parts[0]
+			sqlResponse.Response = processSQLFormat(parts[len(parts)-1])
+		} else if len(parts) == 1 {
+			// 只有一部分，可能是SQL或思考过程
+			sql := processSQLFormat(parts[0])
+			if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "SELECT") ||
+			   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "INSERT") ||
+			   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "UPDATE") ||
+			   strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "DELETE") {
+				sqlResponse.Response = sql
+			} else {
+				sqlResponse.Thinking = parts[0]
+				sqlResponse.Response = ""
+			}
 		}
 	} else {
-		// 如果禁用了思考过程，直接使用内容
-		sqlResponse.Response = content.Content
+		// 不需要思考过程，直接提取SQL
+		// 尝试从响应中提取SQL语句
+		sql := extractSQLDirectly(content.Content)
+		sqlResponse.Response = processSQLFormat(sql)
 	}
-
-	// 处理SQL格式
-	sqlResponse.Response = processSQLFormat(sqlResponse.Response)
 	
-	// 设置token使用情况
 	sqlResponse.PromptTokens = content.PromptTokens
 	sqlResponse.ResponseTokens = content.ResponseTokens
 	sqlResponse.TotalTokens = content.TotalTokens
-
+	
 	return &sqlResponse, nil
 }
 
@@ -220,60 +239,194 @@ func (c *OpenAIClient) sendChatRequest(messages []Message, options Options) (*ch
 	}, nil
 }
 
+// processSQLFormat 处理SQL格式
+func processSQLFormat(sql string) string {
+	// 清理SQL字符串
+	sql = strings.TrimSpace(sql)
+	
+	// 确保SQL以分号结尾
+	if !strings.HasSuffix(sql, ";") {
+		sql = sql + ";"
+	}
+	
+	return sql
+}
+
 // extractSQLFromThinking 从思考过程中提取SQL
 func extractSQLFromThinking(content string) []string {
-	// 按行分割
-	lines := strings.Split(content, "\n")
-	var result []string
-	var currentBlock string
+	// 尝试从代码块中提取SQL
+	sqlRegex := regexp.MustCompile("```sql\\s*([\\s\\S]*?)\\s*```")
+	matches := sqlRegex.FindAllStringSubmatch(content, -1)
 	
-	for _, line := range lines {
-		trimmedLine := strings.TrimSpace(line)
+	if len(matches) > 0 {
+		// 找到了SQL代码块
+		var sqlStatements []string
+		for _, match := range matches {
+			if len(match) > 1 {
+				sql := strings.TrimSpace(match[1])
+				if sql != "" {
+					sqlStatements = append(sqlStatements, sql)
+				}
+			}
+		}
 		
-		// 检查是否是SQL语句
-		if strings.HasPrefix(strings.ToUpper(trimmedLine), "SELECT") ||
-		   strings.HasPrefix(strings.ToUpper(trimmedLine), "INSERT") ||
-		   strings.HasPrefix(strings.ToUpper(trimmedLine), "UPDATE") ||
-		   strings.HasPrefix(strings.ToUpper(trimmedLine), "DELETE") ||
-		   strings.HasPrefix(strings.ToUpper(trimmedLine), "CREATE") ||
-		   strings.HasPrefix(strings.ToUpper(trimmedLine), "DROP") ||
-		   strings.HasPrefix(strings.ToUpper(trimmedLine), "ALTER") {
-			// 如果当前块不为空，添加到结果
-			if currentBlock != "" {
-				result = append(result, currentBlock)
-				currentBlock = ""
+		if len(sqlStatements) > 0 {
+			// 提取思考过程
+			thinking := content
+			for _, match := range matches {
+				thinking = strings.Replace(thinking, match[0], "", 1)
 			}
-			// 添加SQL语句
-			result = append(result, trimmedLine)
-		} else if trimmedLine != "" {
-			// 如果不是SQL语句且不为空，添加到当前块
-			if currentBlock != "" {
-				currentBlock += "\n"
+			thinking = strings.TrimSpace(thinking)
+			
+			if thinking != "" {
+				return append([]string{thinking}, sqlStatements...)
 			}
-			currentBlock += line
+			return sqlStatements
 		}
 	}
 	
-	// 如果最后还有未添加的块，添加到结果
-	if currentBlock != "" {
-		result = append(result, currentBlock)
+	// 如果没有找到代码块，尝试按行提取
+	lines := strings.Split(content, "\n")
+	var result []string
+	var sqlBlock strings.Builder
+	var thinkingBlock strings.Builder
+	inSQL := false
+	
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		upperLine := strings.ToUpper(trimmedLine)
+		
+		// 检查是否是SQL语句的开始
+		if strings.HasPrefix(upperLine, "SELECT") ||
+		   strings.HasPrefix(upperLine, "INSERT") ||
+		   strings.HasPrefix(upperLine, "UPDATE") ||
+		   strings.HasPrefix(upperLine, "DELETE") ||
+		   strings.HasPrefix(upperLine, "CREATE") ||
+		   strings.HasPrefix(upperLine, "DROP") ||
+		   strings.HasPrefix(upperLine, "ALTER") ||
+		   strings.HasPrefix(upperLine, "WITH") {
+			inSQL = true
+			if sqlBlock.Len() > 0 {
+				sqlBlock.WriteString(" ")
+			}
+			sqlBlock.WriteString(trimmedLine)
+		} else if inSQL {
+			// 继续收集SQL语句
+			if strings.HasSuffix(trimmedLine, ";") {
+				// SQL语句结束
+				if sqlBlock.Len() > 0 {
+					sqlBlock.WriteString(" ")
+				}
+				sqlBlock.WriteString(trimmedLine)
+				inSQL = false
+				
+				// 添加完整的SQL语句到结果
+				if sqlBlock.Len() > 0 {
+					result = append(result, sqlBlock.String())
+					sqlBlock.Reset()
+				}
+			} else if trimmedLine == "" {
+				// 空行可能表示SQL语句结束
+				if sqlBlock.Len() > 0 {
+					result = append(result, sqlBlock.String())
+					sqlBlock.Reset()
+				}
+				inSQL = false
+			} else {
+				// 继续收集SQL语句
+				if sqlBlock.Len() > 0 {
+					sqlBlock.WriteString(" ")
+				}
+				sqlBlock.WriteString(trimmedLine)
+			}
+		} else {
+			// 收集思考过程
+			if thinkingBlock.Len() > 0 {
+				thinkingBlock.WriteString("\n")
+			}
+			thinkingBlock.WriteString(line)
+		}
+	}
+	
+	// 处理最后可能剩余的SQL语句
+	if sqlBlock.Len() > 0 {
+		result = append(result, sqlBlock.String())
+	}
+	
+	// 如果有思考过程，添加到结果的开头
+	if thinkingBlock.Len() > 0 {
+		return append([]string{thinkingBlock.String()}, result...)
+	}
+	
+	// 如果以上方法都没有提取到SQL，尝试直接返回内容
+	if len(result) == 0 && content != "" {
+		return []string{content}
 	}
 	
 	return result
 }
 
-// processSQLFormat 处理SQL格式
-func processSQLFormat(sql string) string {
-	// 移除多余的引号
-	sql = strings.Trim(sql, "\"'`")
+// extractSQLDirectly 直接提取SQL
+func extractSQLDirectly(content string) string {
+	// 清理内容
+	content = strings.TrimSpace(content)
 	
-	// 如果SQL不以分号结尾，添加分号
-	if !strings.HasSuffix(sql, ";") {
-		sql += ";"
+	// 检查是否是SQL语句
+	upperContent := strings.ToUpper(content)
+	if strings.HasPrefix(upperContent, "SELECT") ||
+	   strings.HasPrefix(upperContent, "INSERT") ||
+	   strings.HasPrefix(upperContent, "UPDATE") ||
+	   strings.HasPrefix(upperContent, "DELETE") ||
+	   strings.HasPrefix(upperContent, "CREATE") ||
+	   strings.HasPrefix(upperContent, "DROP") ||
+	   strings.HasPrefix(upperContent, "ALTER") ||
+	   strings.HasPrefix(upperContent, "WITH") {
+		return content
 	}
 	
-	// 移除多余的空白字符
-	sql = strings.TrimSpace(sql)
+	// 如果不是SQL语句，尝试从内容中提取SQL
+	lines := strings.Split(content, "\n")
+	var sqlBlock strings.Builder
 	
-	return sql
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		upperLine := strings.ToUpper(trimmedLine)
+		
+		// 检查是否是SQL语句的开始
+		if strings.HasPrefix(upperLine, "SELECT") ||
+		   strings.HasPrefix(upperLine, "INSERT") ||
+		   strings.HasPrefix(upperLine, "UPDATE") ||
+		   strings.HasPrefix(upperLine, "DELETE") ||
+		   strings.HasPrefix(upperLine, "CREATE") ||
+		   strings.HasPrefix(upperLine, "DROP") ||
+		   strings.HasPrefix(upperLine, "ALTER") ||
+		   strings.HasPrefix(upperLine, "WITH") {
+			if sqlBlock.Len() > 0 {
+				sqlBlock.WriteString(" ")
+			}
+			sqlBlock.WriteString(trimmedLine)
+		} else if sqlBlock.Len() > 0 {
+			// 继续收集SQL语句
+			if strings.HasSuffix(trimmedLine, ";") {
+				// SQL语句结束
+				if sqlBlock.Len() > 0 {
+					sqlBlock.WriteString(" ")
+				}
+				sqlBlock.WriteString(trimmedLine)
+				break
+			} else if trimmedLine == "" {
+				// 空行可能表示SQL语句结束
+				break
+			} else {
+				// 继续收集SQL语句
+				if sqlBlock.Len() > 0 {
+					sqlBlock.WriteString(" ")
+				}
+				sqlBlock.WriteString(trimmedLine)
+			}
+		}
+	}
+	
+	// 返回提取的SQL
+	return sqlBlock.String()
 }

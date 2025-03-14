@@ -14,6 +14,30 @@ const (
 	ProviderLocal Provider = "local"
 )
 
+// ModelConfig 表示模型配置
+type ModelConfig struct {
+	// CanThink 表示模型是否具有思考能力
+	CanThink bool
+}
+
+// GetModelConfig 获取模型配置
+func GetModelConfig(modelName string) ModelConfig {
+	// 默认配置
+	config := ModelConfig{
+		CanThink: true,
+	}
+	
+	// 根据模型名称设置特定配置
+	switch modelName {
+	case "gpt-3.5-turbo", "gpt-3.5-turbo-0125":
+		config.CanThink = false
+	case "deepseek-r1", "deepseek-r1-250120", "gpt-4", "gpt-4-turbo":
+		config.CanThink = true
+	}
+	
+	return config
+}
+
 // Message 表示聊天消息
 type Message struct {
 	Role    string `json:"role"`
