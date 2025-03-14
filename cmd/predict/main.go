@@ -110,15 +110,7 @@ func main() {
 	var client llm.LLM
 	if *provider != "" {
 		// 如果命令行指定了提供商，使用命令行参数
-		// 特殊处理deepseek模型
 		modelName := *model
-		if modelName == "deepseek-r1-250120" && *provider == "openai" {
-			// 确保配置中有正确的BaseURL，但不硬编码API密钥
-			// API密钥应从配置文件或环境变量中读取
-			if cfg.LLM.OpenAI.BaseURL == "" {
-				cfg.LLM.OpenAI.BaseURL = "https://ark.cn-beijing.volces.com/api/v3"
-			}
-		}
 		client, err = factory.CreateWithProvider(llm.Provider(*provider), modelName)
 	} else {
 		// 否则使用配置文件中的默认设置
