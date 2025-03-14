@@ -1,0 +1,16 @@
+openai:
+  api_key: "ff161769-08ef-447c-82a0-277f3fd8dfb6"  # 替换为你的API密钥
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"  # API基础URL
+
+model:
+  name: "deepseek-r1"  # 使用的模型名称
+  temperature: 0  # 温度参数
+  max_tokens: 200  # 最大生成token数
+
+eval:
+  method: "exec"  # 评估方法：exec或test-suite
+  db_dir: "data/database"  # 数据库目录
+
+dataset:
+  spider_dir: "data/spider"  # Spider数据集目录
+  cspider_dir: "data/cspider"  # CSpider数据集目录
