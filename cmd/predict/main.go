@@ -113,9 +113,11 @@ func main() {
 		// 特殊处理deepseek模型
 		modelName := *model
 		if modelName == "deepseek-r1-250120" && *provider == "openai" {
-			// 确保配置中有正确的API密钥和URL
-			cfg.LLM.OpenAI.APIKey = "ff161769-08ef-447c-82a0-277f3fd8dfb6"
-			cfg.LLM.OpenAI.BaseURL = "https://ark.cn-beijing.volces.com/api/v3"
+			// 确保配置中有正确的BaseURL，但不硬编码API密钥
+			// API密钥应从配置文件或环境变量中读取
+			if cfg.LLM.OpenAI.BaseURL == "" {
+				cfg.LLM.OpenAI.BaseURL = "https://ark.cn-beijing.volces.com/api/v3"
+			}
 		}
 		client, err = factory.CreateWithProvider(llm.Provider(*provider), modelName)
 	} else {
