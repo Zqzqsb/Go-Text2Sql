@@ -13,8 +13,8 @@ llm:
   
   # OpenAI配置
   openai:
-    # API密钥
-    api_key: "ff161769-08ef-447c-82a0-277f3fd8dfb6"
+    # API密钥 - 警告：切勿提交真实密钥到版本控制系统
+    api_key: "YOUR_OPENAI_API_KEY_HERE"
     # API基础URL
     base_url: "https://ark.cn-beijing.volces.com/api/v3"
   

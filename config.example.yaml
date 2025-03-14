@@ -1,5 +1,5 @@
 openai:
-  api_key: "ff161769-08ef-447c-82a0-277f3fd8dfb6"  # 替换为你的API密钥
+  api_key: "YOUR_OPENAI_API_KEY_HERE"  # 替换为你的API密钥，切勿提交真实密钥到版本控制系统
   base_url: "https://ark.cn-beijing.volces.com/api/v3"  # API基础URL
 
 model:

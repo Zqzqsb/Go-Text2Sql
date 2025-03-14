@@ -13,15 +13,15 @@ llm:
   
   # OpenAI配置
   openai:
-    # API密钥
-    api_key: "your-openai-api-key"
+    # API密钥 - 警告：切勿提交真实密钥到版本控制系统
+    api_key: "YOUR_OPENAI_API_KEY_HERE"
     # API基础URL，默认为官方API
     base_url: "https://api.openai.com/v1"
   
   # Azure OpenAI配置
   azure:
-    # API密钥
-    api_key: "your-azure-api-key"
+    # API密钥 - 警告：切勿提交真实密钥到版本控制系统
+    api_key: "YOUR_AZURE_API_KEY_HERE"
     # 终端点URL
     endpoint: "https://your-resource-name.openai.azure.com"
     # 部署ID
@@ -31,8 +31,8 @@ llm:
   
   # Google Gemini配置
   gemini:
-    # API密钥
-    api_key: "your-gemini-api-key"
+    # API密钥 - 警告：切勿提交真实密钥到版本控制系统
+    api_key: "YOUR_GEMINI_API_KEY_HERE"
     # 可选：自定义基础URL
     base_url: ""
   
