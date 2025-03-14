@@ -1,4 +1,4 @@
-module github.com/yourusername/gosql
+module github.com/zqzqsb/gosql
 
 go 1.23.0
 

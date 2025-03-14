@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/yourusername/gosql/internal/config"
+	"github.com/zqzqsb/gosql/internal/config"
 )
 
 // Client 表示OpenAI API客户端

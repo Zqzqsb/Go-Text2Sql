@@ -6,11 +6,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/yourusername/gosql/internal/config"
-	"github.com/yourusername/gosql/internal/eval"
-	"github.com/yourusername/gosql/internal/llm"
-	"github.com/yourusername/gosql/internal/schema"
-	"github.com/yourusername/gosql/pkg/utils"
+	"github.com/zqzqsb/gosql/internal/config"
+	"github.com/zqzqsb/gosql/internal/eval"
+	"github.com/zqzqsb/gosql/internal/llm"
+	"github.com/zqzqsb/gosql/internal/schema"
+	"github.com/zqzqsb/gosql/pkg/utils"
 )
 
 func main() {

@@ -5,8 +5,8 @@ import (
 	"log"
 	"path/filepath"
 
-	"github.com/yourusername/gosql/internal/dataset"
-	"github.com/yourusername/gosql/internal/eval"
+	"github.com/zqzqsb/gosql/internal/dataset"
+	"github.com/zqzqsb/gosql/internal/eval"
 )
 
 func main() {

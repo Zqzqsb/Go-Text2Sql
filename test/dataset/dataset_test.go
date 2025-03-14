@@ -4,7 +4,7 @@ import (
 	"testing"
 	"path/filepath"
 
-	"github.com/yourusername/gosql/internal/dataset"
+	"github.com/zqzqsb/gosql/internal/dataset"
 )
 
 func TestSpiderDataset(t *testing.T) {
