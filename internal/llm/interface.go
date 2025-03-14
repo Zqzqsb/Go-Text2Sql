@@ -59,6 +59,7 @@ type Options struct {
 	MaxTokens      int
 	DisableThinking bool
 	SystemPrompt   string
+	PreserveChineseTerms bool // 是否保留中文词汇不翻译
 }
 
 // DefaultOptions 返回默认选项
@@ -68,6 +69,7 @@ func DefaultOptions() Options {
 		MaxTokens:      2048,
 		DisableThinking: false,
 		SystemPrompt:   "请详细解释你的思考过程，然后给出最终的SQL查询。确保最终的SQL查询是单独一行，以分号结尾。",
+		PreserveChineseTerms: true, // 默认保留中文词汇不翻译
 	}
 }
 

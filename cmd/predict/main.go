@@ -43,6 +43,7 @@ func main() {
 	targetID := flag.Int("id", -1, "目标样例ID")
 	limit := flag.Int("limit", -1, "最大样例数量")
 	disableThinking := flag.Bool("disable-thinking", false, "禁用思考过程")
+	preserveChineseTerms := flag.Bool("preserve-chinese", true, "保留中文词汇不翻译")
 	flag.Parse()
 
 	// 检查必要参数
@@ -133,6 +134,7 @@ func main() {
 	// 设置选项
 	options := factory.GetDefaultOptions()
 	options.DisableThinking = *disableThinking
+	options.PreserveChineseTerms = *preserveChineseTerms
 
 	// 生成结果文件名
 	timestamp := time.Now().Format("20060102_150405")
