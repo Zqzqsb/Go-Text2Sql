@@ -1,0 +1,12 @@
+SELECT COUNT(*) FROM continents;
+SELECT c.ContId, c.Continent, COUNT(co.CountryId) AS NumberOfCountries FROM continents c JOIN countries co ON c.ContId = co.Continent GROUP BY c.ContId, c.Continent;
+SELECT continents.ContId, continents.Continent, COUNT(countries.CountryId) AS NumberOfCountries FROM continents LEFT JOIN countries ON continents.ContId = countries.Continent GROUP BY continents.ContId, continents.Continent;
+SELECT COUNT(*) FROM countries;
+SELECT COUNT(*) FROM countries;
+SELECT cm.Maker, cm.Id, COUNT(ml.ModelId) AS NumberOfModels FROM car_makers cm LEFT JOIN model_list ml ON cm.Id = ml.Maker GROUP BY cm.Id, cm.Maker;
+SELECT car_makers.FullName, car_makers.Id, COUNT(model_list.ModelId) AS NumberOfModels FROM car_makers LEFT JOIN model_list ON car_makers.Id = model_list.Maker GROUP BY car_makers.Id, car_makers.FullName;
+SELECT c.Make FROM cars_data AS cd JOIN car_names AS c ON cd.Id = c.MakeId WHERE CAST(cd.Horsepower AS INTEGER) = (SELECT MIN(CAST(Horsepower AS INTEGER)) FROM cars_data) LIMIT 1;
+SELECT model_list.Model FROM cars_data JOIN car_names ON cars_data.Id = car_names.MakeId JOIN model_list ON car_names.Model = model_list.Model WHERE CAST(cars_data.Horsepower AS INTEGER) = (SELECT MIN(CAST(Horsepower AS INTEGER)) FROM cars_data);
+SELECT DISTINCT car_names.Model FROM cars_data JOIN car_names ON cars_data.Id = car_names.MakeId WHERE cars_data.Weight < (SELECT AVG(Weight) FROM cars_data);
+SELECT DISTINCT model_list.Model FROM cars_data JOIN car_names ON cars_data.Id = car_names.MakeId JOIN model_list ON car_names.Model = model_list.Model WHERE cars_data.Weight < (SELECT AVG(Weight) FROM cars_data);
+SELECT DISTINCT car_makers.Maker FROM car_makers JOIN model_list ON car_makers.Id = model_list.Maker JOIN car_names ON model_list.Model = car_names.Model JOIN cars_data ON car_names.MakeId = cars_data.Id WHERE cars_data.Year = 1970;
