@@ -69,5 +69,7 @@ func FormatPrompt(question string, schema string) string {
 问题:
 ` + question + `
 
-请提供详细的思考过程，然后给出最终的SQL查询。确保最终的SQL查询是单独一行，以分号结尾。`
+请提供详细的思考过程，然后给出最终的SQL查询。确保最终的SQL查询是单独一行，以分号结尾。
+
+重要：请尽可能使用大写形式表示所有表名和字段名。例如，使用 "SELECT * FROM USERS" 而不是 "select * from users"。`
 }
