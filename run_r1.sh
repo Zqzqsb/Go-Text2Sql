@@ -2,6 +2,8 @@
 
 # 默认值
 PRESERVE_CHINESE=false
+START=0
+END=5
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -12,6 +14,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-preserve-chinese)
       PRESERVE_CHINESE=false
+      shift
+      ;;
+    --start=*)
+      START="${1#*=}"
+      shift
+      ;;
+    --end=*)
+      END="${1#*=}"
       shift
       ;;
     *)
@@ -37,11 +47,13 @@ else
 fi
 
 # 运行predict命令
-echo "运行参数: --preserve-chinese=$PRESERVE_CHINESE ${ARGS[*]}"
+echo "运行参数: --preserve-chinese=$PRESERVE_CHINESE --start=$START --end=$END ${ARGS[*]}"
 ./bin/gosql-predict \
   --dataset configs/datasets/cspider.json \
   --provider openai \
-  --model deepseek-r1-250120 \
-  --limit 5 \
+  --model deepseek-r1-250120\
+  --start $START \
+  --end $END \
+  --use-index=true \
   --preserve-chinese=$PRESERVE_CHINESE \
   "${ARGS[@]}"
