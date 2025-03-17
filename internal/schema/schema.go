@@ -39,7 +39,23 @@ type DatabaseSchema struct {
 
 // LoadSchema 从指定的路径加载数据库Schema
 func LoadSchema(dbPath string) (*DatabaseSchema, error) {
-	// 首先尝试读取schema.json文件
+	// 首先尝试使用JSON加载器加载schema
+	datasetDir := filepath.Dir(filepath.Dir(dbPath)) // 获取dataset目录路径
+	jsonFiles, err := FindJSONSchemaFiles(datasetDir)
+	
+	if err == nil && len(jsonFiles) > 0 {
+		schemas, err := LoadTablesFromJSON(jsonFiles)
+		if err == nil {
+			// 从路径中提取数据库ID
+			dbID := filepath.Base(dbPath)
+			if schema, ok := schemas[dbID]; ok {
+				// 将SchemaGraph转换为DatabaseSchema
+				return ConvertToDBSchema(schema), nil
+			}
+		}
+	}
+	
+	// 如果无法从JSON加载，尝试读取schema.json文件
 	schemaPath := filepath.Join(dbPath, "schema.json")
 	data, err := os.ReadFile(schemaPath)
 	
