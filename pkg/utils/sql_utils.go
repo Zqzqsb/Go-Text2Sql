@@ -26,7 +26,7 @@ func ProcessDuplication(sql string) string {
 func ExtractFinalSQL(response string) string {
 	// 按行分割响应
 	lines := strings.Split(response, "\n")
-	
+
 	// 查找最后一个以SELECT开头的行
 	var finalSQL string
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -36,12 +36,12 @@ func ExtractFinalSQL(response string) string {
 			break
 		}
 	}
-	
+
 	// 如果没有找到，则使用整个响应
 	if finalSQL == "" {
 		finalSQL = strings.TrimSpace(response)
 	}
-	
+
 	// 确保SQL以SELECT开头
 	if !strings.HasPrefix(strings.ToUpper(finalSQL), "SELECT") {
 		if strings.HasPrefix(finalSQL, " ") {
@@ -50,12 +50,12 @@ func ExtractFinalSQL(response string) string {
 			finalSQL = "SELECT " + finalSQL
 		}
 	}
-	
+
 	// 确保SQL以分号结尾
 	if !strings.HasSuffix(finalSQL, ";") {
 		finalSQL += ";"
 	}
-	
+
 	return finalSQL
 }
 
@@ -69,7 +69,5 @@ func FormatPrompt(question string, schema string) string {
 问题:
 ` + question + `
 
-请提供详细的思考过程，然后给出最终的SQL查询。确保最终的SQL查询是单独一行，以分号结尾。
-
-重要：请尽可能使用大写形式表示所有表名和字段名。例如，使用 "SELECT * FROM USERS" 而不是 "select * from users"。`
+请提供详细的思考过程，然后给出最终的SQL查询。确保最终的SQL查询是单独一行，以分号结尾。`
 }

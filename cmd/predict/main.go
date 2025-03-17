@@ -4,14 +4,17 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/zqzqsb/gosql/internal/config"
 	"github.com/zqzqsb/gosql/internal/dataset"
+	"github.com/zqzqsb/gosql/internal/eval"
 	"github.com/zqzqsb/gosql/internal/llm"
 	"github.com/zqzqsb/gosql/internal/schema"
 	"github.com/zqzqsb/gosql/pkg/utils"
@@ -24,10 +27,14 @@ type SQLResult struct {
 	Question    string                 `json:"query"`
 	Pred        string                 `json:"pred"`
 	GroundTruth string                 `json:"ground_truth"`
+	IsCorrect   bool                   `json:"is_correct"`
 	Thinking    string                 `json:"thinking,omitempty"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 	SequenceNum int                    `json:"sequence_num,omitempty"` // 处理顺序
 }
+
+var currentDBName string
+var currentDataset *dataset.Dataset
 
 func main() {
 	// 命令行参数
@@ -38,10 +45,10 @@ func main() {
 	outputDir := flag.String("output-dir", "results", "输出目录")
 	provider := flag.String("provider", "", "LLM提供商 (openai, azure, gemini)")
 	model := flag.String("model", "", "模型名称")
-	startID := flag.Int("start", 0, "起始样例ID")
-	endID := flag.Int("end", -1, "结束样例ID")
+	startID := flag.Int("start", 0, "起始样例ID或索引")
+	endID := flag.Int("end", -1, "结束样例ID或索引")
 	targetID := flag.Int("id", -1, "目标样例ID")
-	limit := flag.Int("limit", -1, "最大样例数量")
+	useIndex := flag.Bool("use-index", true, "使用样例索引而不是ID")
 	disableThinking := flag.Bool("disable-thinking", false, "禁用思考过程")
 	preserveChineseTerms := flag.Bool("preserve-chinese", true, "保留中文词汇不翻译")
 	flag.Parse()
@@ -74,23 +81,23 @@ func main() {
 	}
 
 	// 加载数据集
-	ds, err := dataset.LoadFromFile(*datasetPath)
+	currentDataset, err = dataset.LoadFromFile(*datasetPath)
 	if err != nil {
 		fmt.Printf("加载数据集配置失败: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("数据集: 类型=%s, 名称=%s\n", ds.Type, ds.Name)
+	fmt.Printf("数据集: 类型=%s, 名称=%s\n", currentDataset.Type, currentDataset.Name)
 
 	// 加载样例
 	var examples []map[string]interface{}
 	switch *split {
 	case "train":
-		examples, err = ds.LoadTrainExamples()
+		examples, err = currentDataset.LoadTrainExamples()
 	case "dev":
-		examples, err = ds.LoadDevExamples()
+		examples, err = currentDataset.LoadDevExamples()
 	case "test":
-		examples, err = ds.LoadTestExamples()
+		examples, err = currentDataset.LoadTestExamples()
 	default:
 		fmt.Printf("不支持的数据集分割: %s\n", *split)
 		os.Exit(1)
@@ -136,7 +143,7 @@ func main() {
 	
 	// 创建运行目录
 	runDir := filepath.Join(*outputDir, fmt.Sprintf("%s_%s_%s_%s", 
-		ds.Type, *split, modelName, timestamp))
+		currentDataset.Type, *split, modelName, timestamp))
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		fmt.Printf("创建运行目录失败: %v\n", err)
 		os.Exit(1)
@@ -172,20 +179,24 @@ func main() {
 		}
 	} else {
 		// 否则处理范围内的样例
-		for _, example := range examples {
-			id := getExampleID(example)
-			if id < *startID {
-				continue
-			}
-			if *endID >= 0 && id > *endID {
-				continue
+		for i, example := range examples {
+			if *useIndex {
+				if i < *startID {
+					continue
+				}
+				if *endID >= 0 && i > *endID {
+					continue
+				}
+			} else {
+				id := getExampleID(example)
+				if id < *startID {
+					continue
+				}
+				if *endID >= 0 && id > *endID {
+					continue
+				}
 			}
 			processedExamples = append(processedExamples, example)
-		}
-
-		// 如果指定了限制数量，截取前N个
-		if *limit > 0 && len(processedExamples) > *limit {
-			processedExamples = processedExamples[:*limit]
 		}
 	}
 
@@ -196,8 +207,16 @@ func main() {
 	for i, example := range processedExamples {
 		fmt.Printf("处理样例 %d/%d...\n", i+1, len(processedExamples))
 		
+		// 获取当前数据库名称
+		dbName, ok := example["db_id"].(string)
+		if !ok {
+			fmt.Printf("样例中没有数据库名称\n")
+			continue
+		}
+		currentDBName = dbName
+		
 		// 生成SQL
-		result := generateSQL(client, options, ds, example)
+		result := generateSQL(client, options, currentDataset, example)
 		result.SequenceNum = i + 1 // 设置处理顺序
 		results = append(results, result)
 		
@@ -324,6 +343,9 @@ func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, examp
 	result.Metadata["response_tokens"] = response.ResponseTokens
 	result.Metadata["total_tokens"] = response.TotalTokens
 	
+	// 判断预测的SQL与标准答案是否一致
+	result.IsCorrect = isEquivalentSQL(result.Pred, result.GroundTruth)
+	
 	return result
 }
 
@@ -423,4 +445,106 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 	}
 	
 	fmt.Printf("预测文件已保存到: %s\n", predFile)
+}
+
+// 判断两个SQL语句是否等价（通过比较执行结果）
+func isEquivalentSQL(sql1 string, sql2 string) bool {
+	// 如果SQL语句完全相同（忽略大小写和空格），则认为它们等价
+	if normalizeSQL(sql1) == normalizeSQL(sql2) {
+		return true
+	}
+	
+	// 获取当前正在处理的数据库路径
+	dbName := currentDBName
+	if dbName == "" {
+		// 如果没有当前数据库名称，则无法执行SQL查询
+		return false
+	}
+	
+	// 构建数据库路径
+	dbPath := filepath.Join(currentDataset.BaseDir, currentDataset.DBDir, dbName, dbName+".sqlite")
+	
+	// 检查数据库文件是否存在
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		fmt.Printf("数据库文件不存在: %s\n", dbPath)
+		// 如果数据库文件不存在，则回退到文本比较
+		return false
+	}
+	
+	// 执行两个SQL查询
+	result1, err1 := eval.ExecSQL(dbPath, sql1)
+	result2, err2 := eval.ExecSQL(dbPath, sql2)
+	
+	// 如果任一查询执行失败，则认为它们不等价
+	if err1 != nil || err2 != nil {
+		fmt.Printf("SQL执行错误: %v, %v\n", err1, err2)
+		return false
+	}
+	
+	if !result1.Success || !result2.Success {
+		fmt.Printf("SQL执行不成功: %v, %v\n", result1.Error, result2.Error)
+		return false
+	}
+	
+	// 比较结果行数（不包括列名行）
+	if len(result1.Rows) != len(result2.Rows) {
+		fmt.Printf("结果行数不同: %d vs %d\n", len(result1.Rows), len(result2.Rows))
+		return false
+	}
+	
+	// 如果只有列名行，则认为结果为空，此时两个查询等价
+	if len(result1.Rows) == 1 {
+		return true
+	}
+	
+	// 比较结果内容（忽略列名）
+	for i := 1; i < len(result1.Rows); i++ {
+		if len(result1.Rows[i]) != len(result2.Rows[i]) {
+			fmt.Printf("行 %d 的列数不同: %d vs %d\n", i, len(result1.Rows[i]), len(result2.Rows[i]))
+			return false
+		}
+		
+		// 比较每一行的内容
+		for j := 0; j < len(result1.Rows[i]); j++ {
+			// 尝试将字符串转换为数字进行比较
+			val1 := strings.TrimSpace(result1.Rows[i][j])
+			val2 := strings.TrimSpace(result2.Rows[i][j])
+			
+			// 如果两个值完全相同，则继续比较下一个值
+			if val1 == val2 {
+				continue
+			}
+			
+			// 尝试将值转换为浮点数进行比较
+			float1, err1 := strconv.ParseFloat(val1, 64)
+			float2, err2 := strconv.ParseFloat(val2, 64)
+			if err1 == nil && err2 == nil {
+				// 如果两个浮点数相等（允许一定的误差），则继续比较下一个值
+				if math.Abs(float1-float2) < 1e-10 {
+					continue
+				}
+			}
+			
+			// 如果值不相等，则认为两个查询不等价
+			fmt.Printf("行 %d 列 %d 的值不同: '%s' vs '%s'\n", i, j, val1, val2)
+			return false
+		}
+	}
+	
+	// 所有检查都通过，认为两个SQL查询等价
+	return true
+}
+
+// 标准化SQL语句
+func normalizeSQL(sql string) string {
+	// 转换为小写
+	sql = strings.ToLower(sql)
+	
+	// 移除分号
+	sql = strings.TrimSuffix(sql, ";")
+	
+	// 移除多余的空格
+	sql = strings.Join(strings.Fields(sql), " ")
+	
+	return sql
 }
