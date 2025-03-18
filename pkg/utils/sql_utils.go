@@ -69,5 +69,13 @@ func FormatPrompt(question string, schema string) string {
 问题:
 ` + question + `
 
-请提供详细的思考过程，然后给出最终的SQL查询。确保最终的SQL查询是单独一行，以分号结尾。`
+对于复杂的查询，请先在 <think> 和 </think> 标签之间提供详细的思考过程，然后给出最终的SQL查询语句。
+sql在保证正确性的情况下尽可能简单可读，确保最终的SQL查询是单独一行，以分号结尾。
+
+例如:
+<think>
+这里是思考过程...
+</think>
+
+SELECT * FROM table WHERE condition;`
 }

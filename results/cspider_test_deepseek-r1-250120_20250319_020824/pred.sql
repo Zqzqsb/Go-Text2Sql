@@ -1,0 +1,2 @@
+SELECT p.first_name, p.last_name, p.country_code FROM players p JOIN ( SELECT player_id, SUM(tours) AS total_tours FROM rankings GROUP BY player_id ) t ON p.player_id = t.player_id WHERE t.total_tours = ( SELECT MAX(total_tours) FROM ( SELECT SUM(tours) AS total_tours FROM rankings GROUP BY player_id ) sub );
+SELECT year, COUNT(*) AS num_matches FROM matches GROUP BY year ORDER BY num_matches DESC LIMIT 1;
