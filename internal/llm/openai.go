@@ -48,7 +48,8 @@ type chatCompletionRequest struct {
 // chatCompletionChoice 表示聊天完成的选择
 type chatCompletionChoice struct {
 	Message struct {
-		Content string `json:"content"`
+		Content          string `json:"content"`
+		ReasoningContent string `json:"reasoning_content,omitempty"` // DeepSeek模型特有字段
 	} `json:"message"`
 }
 
@@ -107,32 +108,63 @@ func (c *OpenAIClient) GenerateSQL(prompt string, options Options) (*SQLResponse
 	}
 
 	// 调用Chat方法获取响应
+	fmt.Println("\n发送到LLM的提示:")
+	fmt.Println(prompt)
+	fmt.Println()
+
 	content, err := c.sendChatRequest(messages, options)
 	if err != nil {
 		return nil, err
 	}
 
+	fmt.Println("\nLLM的原始响应内容:")
+	fmt.Println(content.Content)
+	fmt.Println()
+
 	// 处理思考过程和SQL
 	var sqlResponse SQLResponse
 
 	if !disableThinking {
-		// 提取思考过程和SQL
-		parts := extractSQLFromThinking(content.Content)
-		if len(parts) > 1 {
-			// 最后一部分是SQL，其他部分是思考过程
-			sqlResponse.Thinking = parts[0]
-			sqlResponse.Response = processSQLFormat(parts[len(parts)-1])
-		} else if len(parts) == 1 {
-			// 只有一部分，可能是SQL或思考过程
-			sql := processSQLFormat(parts[0])
-			if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "SELECT") ||
-				strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "INSERT") ||
-				strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "UPDATE") ||
-				strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "DELETE") {
-				sqlResponse.Response = sql
-			} else {
+		// 首先尝试提取<think>标签中的内容
+		thinkingStartTag := "<think>"
+		thinkingEndTag := "</think>"
+
+		thinkingStartIndex := strings.Index(content.Content, thinkingStartTag)
+		if thinkingStartIndex != -1 {
+			thinkingStartIndex += len(thinkingStartTag)
+			thinkingEndIndex := strings.Index(content.Content[thinkingStartIndex:], thinkingEndTag)
+
+			if thinkingEndIndex != -1 {
+				// 提取思考过程
+				thinking := strings.TrimSpace(content.Content[thinkingStartIndex : thinkingStartIndex+thinkingEndIndex])
+				sqlResponse.Thinking = thinking
+
+				// 提取SQL（在</think>标签之后的内容）
+				afterThinkingIndex := thinkingStartIndex + thinkingEndIndex + len(thinkingEndTag)
+				if afterThinkingIndex < len(content.Content) {
+					sql := strings.TrimSpace(content.Content[afterThinkingIndex:])
+					sqlResponse.Response = processSQLFormat(sql)
+				}
+			}
+		} else {
+			// 如果没有<think>标签，使用原有的提取逻辑
+			parts := extractSQLFromThinking(content.Content)
+			if len(parts) > 1 {
+				// 最后一部分是SQL，其他部分是思考过程
 				sqlResponse.Thinking = parts[0]
-				sqlResponse.Response = ""
+				sqlResponse.Response = processSQLFormat(parts[len(parts)-1])
+			} else if len(parts) == 1 {
+				// 只有一部分，可能是SQL或思考过程
+				sql := processSQLFormat(parts[0])
+				if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "SELECT") ||
+					strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "INSERT") ||
+					strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "UPDATE") ||
+					strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sql)), "DELETE") {
+					sqlResponse.Response = sql
+				} else {
+					sqlResponse.Thinking = parts[0]
+					sqlResponse.Response = ""
+				}
 			}
 		}
 	} else {
@@ -238,8 +270,17 @@ func (c *OpenAIClient) sendChatRequest(messages []Message, options Options) (*ch
 	}
 
 	// 返回响应内容
+	content := completionResp.Choices[0].Message.Content
+	reasoningContent := completionResp.Choices[0].Message.ReasoningContent
+
+	// 如果存在reasoning_content字段，将其作为思考过程
+	if reasoningContent != "" {
+		// 将思考过程添加到内容中，使用<think>标签包装
+		content = "<think>" + reasoningContent + "</think>" + content
+	}
+
 	return &chatResponse{
-		Content:        completionResp.Choices[0].Message.Content,
+		Content:        content,
 		PromptTokens:   completionResp.Usage.PromptTokens,
 		ResponseTokens: completionResp.Usage.CompletionTokens,
 		TotalTokens:    completionResp.Usage.TotalTokens,

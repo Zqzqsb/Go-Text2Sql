@@ -321,10 +321,10 @@ func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, examp
 
 	// 格式化Schema为提示
 	schemaPrompt := schema.FormatSchemaForPrompt(dbSchema)
-	
+
 	// 保存数据库Schema信息
 	result.DBSchema = schemaPrompt
-	
+
 	// 格式化提示
 	prompt := utils.FormatPrompt(question, schemaPrompt)
 
@@ -341,26 +341,26 @@ func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, examp
 
 	// 设置结果
 	result.Pred = response.Response
-	
+
 	// 提取思考过程
 	thinkingStartTag := "<think>"
 	thinkingEndTag := "</think>"
-	
+
 	thinkingStartIndex := strings.Index(response.Response, thinkingStartTag)
 	if thinkingStartIndex != -1 {
 		thinkingStartIndex += len(thinkingStartTag)
 		thinkingEndIndex := strings.Index(response.Response[thinkingStartIndex:], thinkingEndTag)
-		
+
 		if thinkingEndIndex != -1 {
 			result.Thinking = strings.TrimSpace(response.Response[thinkingStartIndex : thinkingStartIndex+thinkingEndIndex])
 		}
 	}
-	
+
 	// 如果从标签中没有提取到思考过程，则使用原始的思考过程
 	if result.Thinking == "" {
 		result.Thinking = response.Thinking
 	}
-	
+
 	result.Metadata["execution_time"] = elapsedTime.Seconds()
 	result.Metadata["prompt_tokens"] = response.PromptTokens
 	result.Metadata["response_tokens"] = response.ResponseTokens
@@ -398,10 +398,6 @@ func printResult(result SQLResult) {
 	fmt.Printf("\n问题: %s\n", result.Question)
 	fmt.Printf("生成的SQL: %s\n", result.Pred)
 	fmt.Printf("标准SQL: %s\n", result.GroundTruth)
-
-	if result.Thinking != "" {
-		fmt.Printf("\n思考过程:\n%s\n", result.Thinking)
-	}
 
 	if execTime, ok := result.Metadata["execution_time"].(float64); ok {
 		fmt.Printf("执行时间: %.2f秒\n", execTime)

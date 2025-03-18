@@ -74,7 +74,7 @@ func FormatPrompt(question string, schema string) string {
 而不是:
 SELECT year, COUNT(*) AS match_count FROM matches GROUP BY year ORDER BY match_count DESC LIMIT 1;
 这里的核心要点是，问题中只需要"最多的一年"，而不不需要其他字段。请你在请先在 <think> 和 </think> 标签之间提供详细的思考过程，首先要思考的问题需要的字段数量(问到几个便是需要几个，不要肆意添加),然后给出最终的SQL查询语句。
-禁止使用缓存。
+对于任何问题，都需要进行思考禁止使用缓存。
 
 sql在保证正确性的情况下尽可能简单可读，确保最终的SQL查询是单独一行，以分号结尾。
 
