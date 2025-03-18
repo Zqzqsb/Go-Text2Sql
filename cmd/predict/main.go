@@ -435,7 +435,16 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 	// 生成SQL文件
 	var sqlLines []string
 	for _, result := range results {
-		sqlLines = append(sqlLines, result.Pred)
+		// 将SQL查询中的换行符替换为空格，确保每个查询只占一行
+		sql := strings.ReplaceAll(result.Pred, "\n", " ")
+		// 移除多余的空格
+		sql = strings.Join(strings.Fields(sql), " ")
+		sqlLines = append(sqlLines, sql)
+	}
+	
+	// 检查SQL语句数量是否与info.jsonl中的记录数一致
+	if len(sqlLines) != len(results) {
+		fmt.Printf("警告：SQL语句数量(%d)与结果记录数(%d)不一致\n", len(sqlLines), len(results))
 	}
 	
 	err = os.WriteFile(predFile, []byte(strings.Join(sqlLines, "\n")), 0644)
@@ -462,7 +471,7 @@ func isEquivalentSQL(sql1 string, sql2 string) bool {
 	}
 	
 	// 构建数据库路径
-	dbPath := filepath.Join(currentDataset.BaseDir, currentDataset.DBDir, dbName, dbName+".sqlite")
+	dbPath := filepath.Join(currentDataset.BaseDir, currentDataset.DBDir, dbName, "sqlite", "db.sqlite")
 	
 	// 检查数据库文件是否存在
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
