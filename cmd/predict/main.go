@@ -129,7 +129,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("LLM客户端: 提供商=%s, 模型=%s\n\n", 
+	fmt.Printf("LLM客户端: 提供商=%s, 模型=%s\n\n",
 		client.Provider(), client.ModelName())
 
 	// 设置选项
@@ -140,15 +140,15 @@ func main() {
 	// 生成结果文件名
 	timestamp := time.Now().Format("20060102_150405")
 	modelName := client.ModelName()
-	
+
 	// 创建运行目录
-	runDir := filepath.Join(*outputDir, fmt.Sprintf("%s_%s_%s_%s", 
+	runDir := filepath.Join(*outputDir, fmt.Sprintf("%s_%s_%s_%s",
 		currentDataset.Type, *split, modelName, timestamp))
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		fmt.Printf("创建运行目录失败: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	// 结果文件路径
 	outputFile := filepath.Join(runDir, "info.jsonl")
 	predFile := filepath.Join(runDir, "pred.sql")
@@ -206,7 +206,7 @@ func main() {
 	var results []SQLResult
 	for i, example := range processedExamples {
 		fmt.Printf("处理样例 %d/%d...\n", i+1, len(processedExamples))
-		
+
 		// 获取当前数据库名称
 		dbName, ok := example["db_id"].(string)
 		if !ok {
@@ -214,15 +214,15 @@ func main() {
 			continue
 		}
 		currentDBName = dbName
-		
+
 		// 生成SQL
 		result := generateSQL(client, options, currentDataset, example)
 		result.SequenceNum = i + 1 // 设置处理顺序
 		results = append(results, result)
-		
+
 		// 保存结果
 		saveResult(outputFp, result)
-		
+
 		// 输出结果
 		printResult(result)
 	}
@@ -236,7 +236,7 @@ func main() {
 // 获取样例ID
 func getExampleID(example map[string]interface{}) int {
 	var id int
-	
+
 	// 尝试不同的ID字段
 	if idVal, ok := example["id"]; ok {
 		switch v := idVal.(type) {
@@ -257,7 +257,7 @@ func getExampleID(example map[string]interface{}) int {
 			fmt.Sscanf(v, "%d", &id)
 		}
 	}
-	
+
 	// 对于C-Spider数据集，使用数组索引作为ID
 	if id == 0 {
 		if dbID, ok := example["db_id"].(string); ok {
@@ -268,7 +268,7 @@ func getExampleID(example map[string]interface{}) int {
 			}
 		}
 	}
-	
+
 	return id
 }
 
@@ -285,22 +285,22 @@ func stringHash(s string) uint32 {
 func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, example map[string]interface{}) SQLResult {
 	// 提取样例信息
 	id := getExampleID(example)
-	
+
 	question := ""
 	if q, ok := example["question"].(string); ok {
 		question = q
 	}
-	
+
 	dbName := ""
 	if db, ok := example["db_id"].(string); ok {
 		dbName = db
 	}
-	
+
 	query := ""
 	if q, ok := example["query"].(string); ok {
 		query = q
 	}
-	
+
 	result := SQLResult{
 		ID:          id,
 		DBName:      dbName,
@@ -308,7 +308,7 @@ func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, examp
 		GroundTruth: query,
 		Metadata:    make(map[string]interface{}),
 	}
-	
+
 	// 加载数据库Schema
 	dbPath := filepath.Join(ds.BaseDir, ds.DBDir, dbName)
 	dbSchema, err := schema.LoadSchema(dbPath)
@@ -317,24 +317,24 @@ func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, examp
 		result.Metadata["error"] = fmt.Sprintf("加载数据库Schema失败: %v", err)
 		return result
 	}
-	
+
 	// 格式化Schema为提示
 	schemaPrompt := schema.FormatSchemaForPrompt(dbSchema)
-	
+
 	// 格式化提示
 	prompt := utils.FormatPrompt(question, schemaPrompt)
-	
+
 	// 向LLM发送请求
 	startTime := time.Now()
 	response, err := client.GenerateSQL(prompt, options)
 	elapsedTime := time.Since(startTime)
-	
+
 	if err != nil {
 		fmt.Printf("向LLM发送请求失败: %v\n", err)
 		result.Metadata["error"] = fmt.Sprintf("向LLM发送请求失败: %v", err)
 		return result
 	}
-	
+
 	// 设置结果
 	result.Pred = response.Response
 	result.Thinking = response.Thinking
@@ -342,10 +342,10 @@ func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, examp
 	result.Metadata["prompt_tokens"] = response.PromptTokens
 	result.Metadata["response_tokens"] = response.ResponseTokens
 	result.Metadata["total_tokens"] = response.TotalTokens
-	
+
 	// 判断预测的SQL与标准答案是否一致
 	result.IsCorrect = isEquivalentSQL(result.Pred, result.GroundTruth)
-	
+
 	return result
 }
 
@@ -356,13 +356,13 @@ func saveResult(file *os.File, result SQLResult) {
 		fmt.Printf("序列化结果失败: %v\n", err)
 		return
 	}
-	
+
 	_, err = file.Write(data)
 	if err != nil {
 		fmt.Printf("写入结果失败: %v\n", err)
 		return
 	}
-	
+
 	_, err = file.WriteString("\n")
 	if err != nil {
 		fmt.Printf("写入换行符失败: %v\n", err)
@@ -375,29 +375,29 @@ func printResult(result SQLResult) {
 	fmt.Printf("\n问题: %s\n", result.Question)
 	fmt.Printf("生成的SQL: %s\n", result.Pred)
 	fmt.Printf("标准SQL: %s\n", result.GroundTruth)
-	
+
 	if result.Thinking != "" {
 		fmt.Printf("\n思考过程:\n%s\n", result.Thinking)
 	}
-	
+
 	if execTime, ok := result.Metadata["execution_time"].(float64); ok {
 		fmt.Printf("执行时间: %.2f秒\n", execTime)
 	}
-	
+
 	if promptTokens, ok := result.Metadata["prompt_tokens"].(float64); ok {
 		fmt.Printf("Token使用: 提示=%d", int(promptTokens))
-		
+
 		if responseTokens, ok := result.Metadata["response_tokens"].(float64); ok {
 			fmt.Printf(", 响应=%d", int(responseTokens))
 		}
-		
+
 		if totalTokens, ok := result.Metadata["total_tokens"].(float64); ok {
 			fmt.Printf(", 总计=%d", int(totalTokens))
 		}
-		
+
 		fmt.Println()
 	}
-	
+
 	fmt.Println("----------------------------------------")
 }
 
@@ -409,7 +409,7 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 		fmt.Printf("读取结果文件失败: %v\n", err)
 		return
 	}
-	
+
 	// 解析JSONL
 	var results []SQLResult
 	lines := strings.Split(string(data), "\n")
@@ -417,21 +417,21 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 		if line == "" {
 			continue
 		}
-		
+
 		var result SQLResult
 		if err := json.Unmarshal([]byte(line), &result); err != nil {
 			fmt.Printf("解析结果行失败: %v\n", err)
 			continue
 		}
-		
+
 		results = append(results, result)
 	}
-	
+
 	// 排序结果
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].SequenceNum < results[j].SequenceNum
 	})
-	
+
 	// 生成SQL文件
 	var sqlLines []string
 	for _, result := range results {
@@ -441,18 +441,18 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 		sql = strings.Join(strings.Fields(sql), " ")
 		sqlLines = append(sqlLines, sql)
 	}
-	
+
 	// 检查SQL语句数量是否与info.jsonl中的记录数一致
 	if len(sqlLines) != len(results) {
 		fmt.Printf("警告：SQL语句数量(%d)与结果记录数(%d)不一致\n", len(sqlLines), len(results))
 	}
-	
+
 	err = os.WriteFile(predFile, []byte(strings.Join(sqlLines, "\n")), 0644)
 	if err != nil {
 		fmt.Printf("写入SQL文件失败: %v\n", err)
 		return
 	}
-	
+
 	fmt.Printf("预测文件已保存到: %s\n", predFile)
 }
 
@@ -462,68 +462,75 @@ func isEquivalentSQL(sql1 string, sql2 string) bool {
 	if normalizeSQL(sql1) == normalizeSQL(sql2) {
 		return true
 	}
-	
+
 	// 获取当前正在处理的数据库路径
 	dbName := currentDBName
 	if dbName == "" {
 		// 如果没有当前数据库名称，则无法执行SQL查询
 		return false
 	}
-	
+
 	// 构建数据库路径
-	dbPath := filepath.Join(currentDataset.BaseDir, currentDataset.DBDir, dbName, "sqlite", "db.sqlite")
-	
+	dbPath := filepath.Join(currentDataset.BaseDir, currentDataset.DBDir, dbName)
+
 	// 检查数据库文件是否存在
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		fmt.Printf("数据库文件不存在: %s\n", dbPath)
-		// 如果数据库文件不存在，则回退到文本比较
-		return false
+	sqlitePath := filepath.Join(dbPath, dbName+".sqlite")
+	if _, err := os.Stat(sqlitePath); os.IsNotExist(err) {
+		// 尝试直接使用 dbName.sqlite 文件
+		altDbPath := filepath.Join(filepath.Dir(dbPath), dbName+".sqlite")
+		if _, err := os.Stat(altDbPath); os.IsNotExist(err) {
+			fmt.Printf("数据库文件不存在: %s\n", sqlitePath)
+			// 如果数据库文件不存在，则回退到文本比较
+			return false
+		}
+		// 使用替代路径
+		sqlitePath = altDbPath
 	}
-	
+
 	// 执行两个SQL查询
-	result1, err1 := eval.ExecSQL(dbPath, sql1)
-	result2, err2 := eval.ExecSQL(dbPath, sql2)
-	
+	result1, err1 := eval.ExecSQL(sqlitePath, sql1)
+	result2, err2 := eval.ExecSQL(sqlitePath, sql2)
+
 	// 如果任一查询执行失败，则认为它们不等价
 	if err1 != nil || err2 != nil {
 		fmt.Printf("SQL执行错误: %v, %v\n", err1, err2)
 		return false
 	}
-	
+
 	if !result1.Success || !result2.Success {
 		fmt.Printf("SQL执行不成功: %v, %v\n", result1.Error, result2.Error)
 		return false
 	}
-	
+
 	// 比较结果行数（不包括列名行）
 	if len(result1.Rows) != len(result2.Rows) {
 		fmt.Printf("结果行数不同: %d vs %d\n", len(result1.Rows), len(result2.Rows))
 		return false
 	}
-	
+
 	// 如果只有列名行，则认为结果为空，此时两个查询等价
 	if len(result1.Rows) == 1 {
 		return true
 	}
-	
+
 	// 比较结果内容（忽略列名）
 	for i := 1; i < len(result1.Rows); i++ {
 		if len(result1.Rows[i]) != len(result2.Rows[i]) {
 			fmt.Printf("行 %d 的列数不同: %d vs %d\n", i, len(result1.Rows[i]), len(result2.Rows[i]))
 			return false
 		}
-		
+
 		// 比较每一行的内容
 		for j := 0; j < len(result1.Rows[i]); j++ {
 			// 尝试将字符串转换为数字进行比较
 			val1 := strings.TrimSpace(result1.Rows[i][j])
 			val2 := strings.TrimSpace(result2.Rows[i][j])
-			
+
 			// 如果两个值完全相同，则继续比较下一个值
 			if val1 == val2 {
 				continue
 			}
-			
+
 			// 尝试将值转换为浮点数进行比较
 			float1, err1 := strconv.ParseFloat(val1, 64)
 			float2, err2 := strconv.ParseFloat(val2, 64)
@@ -533,13 +540,14 @@ func isEquivalentSQL(sql1 string, sql2 string) bool {
 					continue
 				}
 			}
-			
+
 			// 如果值不相等，则认为两个查询不等价
 			fmt.Printf("行 %d 列 %d 的值不同: '%s' vs '%s'\n", i, j, val1, val2)
 			return false
 		}
 	}
-	
+
+	fmt.Println("SQL查询等价")
 	// 所有检查都通过，认为两个SQL查询等价
 	return true
 }
@@ -548,12 +556,12 @@ func isEquivalentSQL(sql1 string, sql2 string) bool {
 func normalizeSQL(sql string) string {
 	// 转换为小写
 	sql = strings.ToLower(sql)
-	
+
 	// 移除分号
 	sql = strings.TrimSuffix(sql, ";")
-	
+
 	// 移除多余的空格
 	sql = strings.Join(strings.Fields(sql), " ")
-	
+
 	return sql
 }
