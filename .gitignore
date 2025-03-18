@@ -36,3 +36,5 @@ credentials.json
 *.log
 
 bin/
+
+third_party/
