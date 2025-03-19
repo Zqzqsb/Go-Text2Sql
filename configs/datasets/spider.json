@@ -1,20 +1,16 @@
 {
   "type": "spider",
   "name": "Spider",
-  "base_dir": "/home/zq/Projects/BackupProjects/AI/GoSql/data/spider",
+  "base_dir": "./data/spider",
   "files": {
-    "train": [
-      "train_spider.json",
-      "train_others.json"
-    ],
-    "dev": [
-      "dev.json"
-    ],
-    "test": [],
+    "train": ["train.json"],
+    "dev": ["dev.json"],
+    "test": ["dev.json"],
     "tables": "tables.json",
     "gold_sql": {
       "train": "train_gold.sql",
-      "dev": "dev_gold.sql"
+      "dev": "dev_gold.sql",
+      "test": "dev_gold.sql"
     }
   },
   "db_dir": "database",
