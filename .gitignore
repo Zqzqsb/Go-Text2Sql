@@ -38,3 +38,5 @@ credentials.json
 bin/
 
 third_party/
+
+config_*
