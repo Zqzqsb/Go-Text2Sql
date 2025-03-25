@@ -28,6 +28,7 @@ type SQLResult struct {
 	Pred        string                 `json:"pred"`
 	GroundTruth string                 `json:"ground_truth"`
 	IsCorrect   bool                   `json:"is_correct"`
+	ErrorReason string                 `json:"error_reason,omitempty"`
 	Thinking    string                 `json:"thinking,omitempty"`
 	DBSchema    string                 `json:"db_schema,omitempty"` // 数据库Schema信息
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
@@ -367,7 +368,7 @@ func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, examp
 	result.Metadata["total_tokens"] = response.TotalTokens
 
 	// 判断预测的SQL与标准答案是否一致
-	result.IsCorrect = isEquivalentSQL(result.Pred, result.GroundTruth)
+	result.IsCorrect, result.ErrorReason = isEquivalentSQL(result.Pred, result.GroundTruth)
 
 	return result
 }
@@ -415,6 +416,10 @@ func printResult(result SQLResult) {
 		}
 
 		fmt.Println()
+	}
+
+	if !result.IsCorrect {
+		fmt.Printf("错误原因: %s\n", result.ErrorReason)
 	}
 
 	fmt.Println("----------------------------------------")
@@ -476,17 +481,17 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 }
 
 // 判断两个SQL语句是否等价（通过比较执行结果）
-func isEquivalentSQL(sql1 string, sql2 string) bool {
+func isEquivalentSQL(sql1 string, sql2 string) (bool, string) {
 	// 如果SQL语句完全相同（忽略大小写和空格），则认为它们等价
 	if normalizeSQL(sql1) == normalizeSQL(sql2) {
-		return true
+		return true, ""
 	}
 
 	// 获取当前正在处理的数据库路径
 	dbName := currentDBName
 	if dbName == "" {
 		// 如果没有当前数据库名称，则无法执行SQL查询
-		return false
+		return false, "未找到当前数据库名称"
 	}
 
 	// 构建数据库路径
@@ -500,7 +505,7 @@ func isEquivalentSQL(sql1 string, sql2 string) bool {
 		if _, err := os.Stat(altDbPath); os.IsNotExist(err) {
 			fmt.Printf("数据库文件不存在: %s\n", sqlitePath)
 			// 如果数据库文件不存在，则回退到文本比较
-			return false
+			return false, "数据库文件不存在"
 		}
 		// 使用替代路径
 		sqlitePath = altDbPath
@@ -513,30 +518,30 @@ func isEquivalentSQL(sql1 string, sql2 string) bool {
 	// 如果任一查询执行失败，则认为它们不等价
 	if err1 != nil || err2 != nil {
 		fmt.Printf("SQL执行错误: %v, %v\n", err1, err2)
-		return false
+		return false, fmt.Sprintf("SQL执行错误: %v, %v", err1, err2)
 	}
 
 	if !result1.Success || !result2.Success {
 		fmt.Printf("SQL执行不成功: %v, %v\n", result1.Error, result2.Error)
-		return false
+		return false, fmt.Sprintf("SQL执行不成功: %v, %v", result1.Error, result2.Error)
 	}
 
 	// 比较结果行数（不包括列名行）
 	if len(result1.Rows) != len(result2.Rows) {
 		fmt.Printf("结果行数不同: %d vs %d\n", len(result1.Rows), len(result2.Rows))
-		return false
+		return false, fmt.Sprintf("结果行数不同: %d vs %d", len(result1.Rows), len(result2.Rows))
 	}
 
 	// 如果只有列名行，则认为结果为空，此时两个查询等价
 	if len(result1.Rows) == 1 {
-		return true
+		return true, ""
 	}
 
 	// 比较结果内容（忽略列名）
 	for i := 1; i < len(result1.Rows); i++ {
 		if len(result1.Rows[i]) != len(result2.Rows[i]) {
 			fmt.Printf("行 %d 的列数不同: %d vs %d\n", i, len(result1.Rows[i]), len(result2.Rows[i]))
-			return false
+			return false, fmt.Sprintf("行 %d 的列数不同: %d vs %d", i, len(result1.Rows[i]), len(result2.Rows[i]))
 		}
 
 		// 比较每一行的内容
@@ -562,13 +567,13 @@ func isEquivalentSQL(sql1 string, sql2 string) bool {
 
 			// 如果值不相等，则认为两个查询不等价
 			fmt.Printf("行 %d 列 %d 的值不同: '%s' vs '%s'\n", i, j, val1, val2)
-			return false
+			return false, fmt.Sprintf("行 %d 列 %d 的值不同: '%s' vs '%s'", i, j, val1, val2)
 		}
 	}
 
 	fmt.Println("SQL查询等价")
 	// 所有检查都通过，认为两个SQL查询等价
-	return true
+	return true, ""
 }
 
 // 标准化SQL语句
