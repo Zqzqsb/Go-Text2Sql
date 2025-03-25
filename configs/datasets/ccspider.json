@@ -1,0 +1,23 @@
+{
+  "type": "ccspider",
+  "name": "C-CSpider",
+  "base_dir": "./data/ccspider",
+  "files": {
+    "train": ["train.json"],
+    "dev": ["dev.json"],
+    "test": ["dev.json"],
+    "tables": "tables.json",
+    "gold_sql": {
+      "train": "train_gold.sql",
+      "dev": "dev_gold.sql",
+      "test": "dev_gold.sql"
+    }
+  },
+  "db_dir": "database",
+  "stats": {
+    "train_count": 0,
+    "dev_count": 0,
+    "test_count": 0,
+    "db_count": 0
+  }
+}

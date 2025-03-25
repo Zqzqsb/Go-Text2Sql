@@ -102,7 +102,14 @@ func LoadTablesFromJSON(paths []string) (map[string]*SchemaGraph, error) {
 					Table:    table,
 					Name:     colName,
 					OrigName: origColName,
-					Type:     schemaDict.ColumnTypes[i],
+					Type:     "",  // 默认为空字符串
+				}
+				
+				// 安全地设置列类型
+				if i < len(schemaDict.ColumnTypes) {
+					column.Type = schemaDict.ColumnTypes[i]
+				} else {
+					fmt.Printf("警告: 列 %s 的类型索引超出范围，使用默认空字符串\n", colName)
 				}
 				
 				columns[i] = column
