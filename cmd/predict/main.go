@@ -478,6 +478,93 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 	}
 
 	fmt.Printf("预测文件已保存到: %s\n", predFile)
+
+	// 创建sql_results子文件夹
+	resultDir := filepath.Dir(jsonlFile)
+	sqlResultsDir := filepath.Join(resultDir, "sql_results")
+	if err := os.MkdirAll(sqlResultsDir, 0755); err != nil {
+		fmt.Printf("创建sql_results文件夹失败: %v\n", err)
+		return
+	}
+
+	// 为每条SQL生成执行结果文件
+	for _, result := range results {
+		if result.DBName == "" {
+			continue // 跳过没有数据库名称的结果
+		}
+
+		// 构建数据库路径
+		dbPath := filepath.Join(currentDataset.BaseDir, currentDataset.DBDir, result.DBName)
+		sqlitePath := filepath.Join(dbPath, result.DBName+".sqlite")
+
+		// 检查数据库文件是否存在
+		if _, err := os.Stat(sqlitePath); os.IsNotExist(err) {
+			// 尝试直接使用 dbName.sqlite 文件
+			altDbPath := filepath.Join(filepath.Dir(dbPath), result.DBName+".sqlite")
+			if _, err := os.Stat(altDbPath); os.IsNotExist(err) {
+				fmt.Printf("数据库文件不存在: %s，跳过生成SQL结果\n", sqlitePath)
+				continue
+			}
+			// 使用替代路径
+			sqlitePath = altDbPath
+		}
+
+		// 执行预测的SQL和标准SQL
+		predResult, predErr := eval.ExecSQL(sqlitePath, result.Pred)
+		gtResult, gtErr := eval.ExecSQL(sqlitePath, result.GroundTruth)
+
+		// 创建结果文件
+		resultFileName := fmt.Sprintf("%d.json", result.ID)
+		resultFilePath := filepath.Join(sqlResultsDir, resultFileName)
+
+		// 构建结果JSON
+		sqlResultData := map[string]interface{}{
+			"id":            result.ID,
+			"db_id":         result.DBName,
+			"question":      result.Question,
+			"pred_sql":      result.Pred,
+			"gt_sql":        result.GroundTruth,
+			"pred_result":   nil,
+			"pred_error":    nil,
+			"gt_result":     nil,
+			"gt_error":      nil,
+			"is_equivalent": false,
+		}
+
+		// 添加预测SQL的执行结果
+		if predErr != nil {
+			sqlResultData["pred_error"] = predErr.Error()
+		} else {
+			sqlResultData["pred_result"] = predResult
+		}
+
+		// 添加标准SQL的执行结果
+		if gtErr != nil {
+			sqlResultData["gt_error"] = gtErr.Error()
+		} else {
+			sqlResultData["gt_result"] = gtResult
+		}
+
+		// 判断两个SQL是否等价
+		if predErr == nil && gtErr == nil && predResult.Success && gtResult.Success {
+			isEquiv, _ := isEquivalentSQL(result.Pred, result.GroundTruth)
+			sqlResultData["is_equivalent"] = isEquiv
+		}
+
+		// 写入结果文件
+		resultJSON, err := json.MarshalIndent(sqlResultData, "", "  ")
+		if err != nil {
+			fmt.Printf("序列化SQL结果失败: %v\n", err)
+			continue
+		}
+
+		if err := os.WriteFile(resultFilePath, resultJSON, 0644); err != nil {
+			fmt.Printf("写入SQL结果文件失败: %v\n", err)
+			continue
+		}
+	}
+
+	fmt.Printf("SQL执行结果已保存到: %s\n", sqlResultsDir)
 }
 
 // 判断两个SQL语句是否等价（通过比较执行结果）
