@@ -40,3 +40,6 @@ bin/
 third_party/
 
 config_*
+
+# SQL结果目录
+**/sql_results/
