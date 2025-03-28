@@ -1,0 +1,11 @@
+SELECT e.employee_id FROM employees e JOIN departments d ON e.department_id = d.department_id JOIN attendance_records a ON e.employee_id = a.employee_id WHERE d.name = 'Customer Service' AND a.date = '2024-10-13' AND (strftime('%s', a.check_out) - strftime('%s', a.check_in))/3600 > 15;
+SELECT e.name FROM employees e JOIN attendance_records a ON e.employee_id = a.employee_id WHERE e.university = 'Tsinghua University' AND a.date = '2024-10-11' AND a.check_in > '09:00';
+SELECT COUNT(*) FROM attendance_records WHERE employee_id = 'H03961' AND strftime('%Y', date) = '2024' AND check_in > '09:00';
+SELECT e.name FROM employees e JOIN attendance_records a ON e.employee_id = a.employee_id JOIN performance_evaluations p ON e.employee_id = p.employee_id WHERE a.date = '2024-09-24' AND a.check_in < '08:30' AND p.rating = 'A+';
+SELECT e.name, d.name, a.check_in, a.check_out FROM employees e JOIN departments d ON e.department_id = d.department_id JOIN attendance_records a ON e.employee_id = a.employee_id WHERE a.date = '2024-10-05';
+SELECT e.name, d.name, a.check_in, a.check_out FROM employees e JOIN attendance_records a ON e.employee_id = a.employee_id JOIN departments d ON e.department_id = d.department_id WHERE a.date = '2024-09-21' ORDER BY d.name;
+SELECT (SELECT COUNT(*) FROM probation_employees WHERE status = 'Left' AND julianday(end_date) - julianday(start_date) < 90) * 100.0 / (SELECT COUNT(*) FROM employees);
+SELECT e.name FROM employees e JOIN departments d ON e.department_id = d.department_id JOIN attendance_records a ON e.employee_id = a.employee_id WHERE d.name = 'Customer Service' AND a.date = '2024-10-08' AND a.check_in > '09:00';
+SELECT e.name, e.hire_date FROM employees e JOIN probation_employees p ON e.employee_id = p.employee_id;
+SELECT d.name FROM departments d JOIN employees e ON d.department_id = e.department_id JOIN attendance_records a ON e.employee_id = a.employee_id WHERE a.date = '2024-09-22' AND a.check_in > '09:00' AND e.remaining_annual_leave < 5;
+SELECT e.name, p.rating FROM employees e JOIN attendance_records a ON e.employee_id = a.employee_id JOIN performance_evaluations p ON e.employee_id = p.employee_id WHERE YEAR(e.hire_date) = 2023 AND a.date = '2024-10-05';
