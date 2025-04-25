@@ -177,7 +177,37 @@ graph TD
 - 提供字段对齐的建议
 - 调整SQL以反映正确的字段选择
 
-### 4.3 BusinessInfo Agent
+### 4.3 FieldAligner Agent用户交互流程
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant AM as AgentManager
+    participant FA as FieldAligner
+    participant SA as SchemaAnalyzer
+    
+    AM->>FA: 对齐字段
+    
+    alt 字段需要对齐
+        FA->>SA: 获取字段映射建议
+        SA-->>FA: 返回可能的字段映射
+        FA->>AM: 返回需要用户确认的字段映射
+        AM-->>U: 显示字段映射选项
+        
+        activate U
+        Note over U: 用户查看字段映射建议
+        
+        U->>AM: 选择正确的字段映射
+        AM->>FA: 更新字段映射
+        
+        FA->>FA: 应用用户确认的映射
+        deactivate U
+    end
+    
+    FA-->>AM: 返回最终SQL
+```
+
+### 4.4 BusinessInfo Agent
 
 职责：
 - 提供表和字段的业务含义
@@ -217,6 +247,23 @@ sequenceDiagram
     SG-->>AM: 返回SQL
     
     AM->>FA: 对齐字段
+    
+    alt 字段需要对齐
+        FA->>SA: 获取字段映射建议
+        SA-->>FA: 返回可能的字段映射
+        FA->>AM: 返回需要用户确认的字段映射
+        AM-->>U: 显示字段映射选项
+        
+        activate U
+        Note over U: 用户查看字段映射建议
+        
+        U->>AM: 选择正确的字段映射
+        AM->>FA: 更新字段映射
+        
+        FA->>FA: 应用用户确认的映射
+        deactivate U
+    end
+    
     FA-->>AM: 返回最终SQL
     
     AM-->>U: 返回结果
