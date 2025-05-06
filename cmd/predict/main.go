@@ -1,17 +1,19 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/zqzqsb/gosql/internal/agents/query_validator"
 	"github.com/zqzqsb/gosql/internal/config"
 	"github.com/zqzqsb/gosql/internal/dataset"
 	"github.com/zqzqsb/gosql/internal/eval"
@@ -37,6 +39,7 @@ type SQLResult struct {
 
 var currentDBName string
 var currentDataset *dataset.Dataset
+var ambiguousQueriesCount int // 统计模糊查询数量
 
 func main() {
 	// 命令行参数
@@ -233,6 +236,25 @@ func main() {
 
 	// 生成预测文件
 	generatePredictionFile(outputFile, *split, predFile)
+
+	// 统计评测指标
+	fmt.Println(strings.Repeat("=", 50))
+	fmt.Println("评测指标:")
+	fmt.Printf("总样例数: %d\n", len(results))
+	fmt.Printf("模糊查询数: %d (%.2f%%)\n", ambiguousQueriesCount, float64(ambiguousQueriesCount)*100/float64(len(results)))
+	fmt.Printf("有效样例数: %d (排除模糊查询)\n", len(results)-ambiguousQueriesCount)
+	
+	if len(results)-ambiguousQueriesCount > 0 {
+		correctCount := 0
+		for _, result := range results {
+			if result.Pred != "AMBIGUOUS_QUERY" && result.IsCorrect {
+				correctCount++
+			}
+		}
+		fmt.Printf("正确样例数: %d\n", correctCount)
+		fmt.Printf("准确率: %.2f%%\n", float64(correctCount)*100/float64(len(results)-ambiguousQueriesCount))
+	}
+	fmt.Println(strings.Repeat("=", 50))
 }
 
 // 获取样例ID
@@ -287,32 +309,55 @@ func stringHash(s string) uint32 {
 func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, example map[string]interface{}) SQLResult {
 	// 提取样例信息
 	id := getExampleID(example)
-
-	question := ""
-	if q, ok := example["question"].(string); ok {
-		question = q
+	
+	// 获取数据库ID和问题
+	dbID, _ := example["db_id"].(string)
+	question, _ := example["question"].(string)
+	
+	// 创建QueryValidator检测模糊查询
+	validator := query_validator.NewQueryValidator()
+	validator.WithLLM(client) // 使用同一个LLM客户端
+	
+	// 检测查询是否模糊
+	isAmbiguous, ambiguousType, confidence := validator.DetectAmbiguity(context.Background(), question)
+	
+	// 如果是模糊查询，返回特殊的SQLResult
+	if isAmbiguous {
+		ambiguousQueriesCount++ // 增加模糊查询计数
+		
+		// 获取澄清问题
+		clarificationQuestions := query_validator.GenerateClarificationQuestions(question)
+		
+		return SQLResult{
+			ID:          id,
+			DBName:      dbID,
+			Question:    question,
+			Pred:        "AMBIGUOUS_QUERY", // 特殊标记
+			GroundTruth: example["query"].(string),
+			IsCorrect:   false,
+			ErrorReason: "模糊查询需要澄清",
+			Metadata: map[string]interface{}{
+				"is_ambiguous":            true,
+				"ambiguous_type":          ambiguousType,
+				"confidence":              confidence,
+				"clarification_questions": clarificationQuestions,
+			},
+		}
 	}
-
-	dbName := ""
-	if db, ok := example["db_id"].(string); ok {
-		dbName = db
-	}
-
-	query := ""
-	if q, ok := example["query"].(string); ok {
-		query = q
-	}
-
+	
+	// 如果不是模糊查询，继续正常处理
+	question = example["question"].(string)
+	
 	result := SQLResult{
 		ID:          id,
-		DBName:      dbName,
+		DBName:      dbID,
 		Question:    question,
-		GroundTruth: query,
+		GroundTruth: example["query"].(string),
 		Metadata:    make(map[string]interface{}),
 	}
 
 	// 加载数据库Schema
-	dbPath := filepath.Join(ds.BaseDir, ds.DBDir, dbName)
+	dbPath := filepath.Join(ds.BaseDir, ds.DBDir, dbID)
 	dbSchema, err := schema.LoadSchema(dbPath)
 	if err != nil {
 		fmt.Printf("加载数据库Schema失败: %v\n", err)
@@ -427,76 +472,89 @@ func printResult(result SQLResult) {
 
 // 生成预测文件
 func generatePredictionFile(jsonlFile string, split string, predFile string) {
-	// 读取JSONL文件
-	data, err := os.ReadFile(jsonlFile)
+	var results []SQLResult
+	
+	// 读取jsonl文件
+	file, err := os.Open(jsonlFile)
 	if err != nil {
-		fmt.Printf("读取结果文件失败: %v\n", err)
+		fmt.Printf("打开%s失败: %v\n", jsonlFile, err)
 		return
 	}
-
-	// 解析JSONL
-	var results []SQLResult
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-
+	defer file.Close()
+	
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
 		var result SQLResult
 		if err := json.Unmarshal([]byte(line), &result); err != nil {
-			fmt.Printf("解析结果行失败: %v\n", err)
+			fmt.Printf("解析行失败: %v\n", err)
 			continue
 		}
-
 		results = append(results, result)
 	}
-
-	// 排序结果
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].SequenceNum < results[j].SequenceNum
-	})
-
-	// 生成SQL文件
-	var sqlLines []string
-	for _, result := range results {
-		// 将SQL查询中的换行符替换为空格，确保每个查询只占一行
-		sql := strings.ReplaceAll(result.Pred, "\n", " ")
-		// 移除多余的空格
-		sql = strings.Join(strings.Fields(sql), " ")
-		sqlLines = append(sqlLines, sql)
-	}
-
-	// 检查SQL语句数量是否与info.jsonl中的记录数一致
-	if len(sqlLines) != len(results) {
-		fmt.Printf("警告：SQL语句数量(%d)与结果记录数(%d)不一致\n", len(sqlLines), len(results))
-	}
-
-	err = os.WriteFile(predFile, []byte(strings.Join(sqlLines, "\n")), 0644)
-	if err != nil {
-		fmt.Printf("写入SQL文件失败: %v\n", err)
+	
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("读取文件失败: %v\n", err)
 		return
 	}
-
+	
+	// 生成预测文件
+	predFileObj, err := os.Create(predFile)
+	if err != nil {
+		fmt.Printf("创建预测文件失败: %v\n", err)
+		return
+	}
+	defer predFileObj.Close()
+	
+	for _, result := range results {
+		if result.Pred == "AMBIGUOUS_QUERY" {
+			// 对于模糊查询，写入特殊标记
+			fmt.Fprintf(predFileObj, "AMBIGUOUS_QUERY\t%d\n", result.ID)
+		} else {
+			fmt.Fprintf(predFileObj, "%s\t%d\n", result.Pred, result.ID)
+		}
+	}
+	
 	fmt.Printf("预测文件已保存到: %s\n", predFile)
-
+	
 	// 创建sql_results子文件夹
 	resultDir := filepath.Dir(jsonlFile)
 	sqlResultsDir := filepath.Join(resultDir, "sql_results")
-	if err := os.MkdirAll(sqlResultsDir, 0755); err != nil {
-		fmt.Printf("创建sql_results文件夹失败: %v\n", err)
-		return
+	if _, err := os.Stat(sqlResultsDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(sqlResultsDir, 0755); err != nil {
+			fmt.Printf("创建SQL结果目录失败: %v\n", err)
+			os.Exit(1)
+		}
 	}
-
+	
+	// 创建错误SQL查询目录
+	incorrectQueriesDir := filepath.Join(resultDir, "incorrect_queries")
+	if _, err := os.Stat(incorrectQueriesDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(incorrectQueriesDir, 0755); err != nil {
+			fmt.Printf("创建错误SQL查询目录失败: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	
+	// 创建模糊问题目录
+	ambiguousQueriesDir := filepath.Join(resultDir, "ambiguous_queries")
+	if _, err := os.Stat(ambiguousQueriesDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(ambiguousQueriesDir, 0755); err != nil {
+			fmt.Printf("创建模糊问题目录失败: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	
 	// 为每条SQL生成执行结果文件
 	for _, result := range results {
 		if result.DBName == "" {
 			continue // 跳过没有数据库名称的结果
 		}
-
+		
 		// 构建数据库路径
 		dbPath := filepath.Join(currentDataset.BaseDir, currentDataset.DBDir, result.DBName)
 		sqlitePath := filepath.Join(dbPath, result.DBName+".sqlite")
-
+		
 		// 检查数据库文件是否存在
 		if _, err := os.Stat(sqlitePath); os.IsNotExist(err) {
 			// 尝试直接使用 dbName.sqlite 文件
@@ -508,63 +566,112 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 			// 使用替代路径
 			sqlitePath = altDbPath
 		}
-
+		
 		// 执行预测的SQL和标准SQL
-		predResult, predErr := eval.ExecSQL(sqlitePath, result.Pred)
-		gtResult, gtErr := eval.ExecSQL(sqlitePath, result.GroundTruth)
-
+		var predResult *eval.ExecResult
+		var predErr error
+		var sqlResultData map[string]interface{}
+		
+		// 对于非模糊查询，执行SQL并评估结果
+		if result.Pred != "AMBIGUOUS_QUERY" {
+			predResult, predErr = eval.ExecSQL(sqlitePath, result.Pred)
+			gtResult, gtErr := eval.ExecSQL(sqlitePath, result.GroundTruth)
+			
+			// 构建结果JSON
+			sqlResultData = map[string]interface{}{
+				"id":            result.ID,
+				"db_id":         result.DBName,
+				"question":      result.Question,
+				"pred_sql":      result.Pred,
+				"gt_sql":        result.GroundTruth,
+				"pred_result":   nil,
+				"pred_error":    nil,
+				"gt_result":     nil,
+				"gt_error":      nil,
+				"is_equivalent": false,
+				"is_correct":    result.IsCorrect,
+				"error_reason":  result.ErrorReason,
+			}
+			
+			// 添加预测SQL的执行结果
+			if predErr != nil {
+				sqlResultData["pred_error"] = predErr.Error()
+			} else {
+				sqlResultData["pred_result"] = predResult
+			}
+			
+			// 添加标准SQL的执行结果
+			if gtErr != nil {
+				sqlResultData["gt_error"] = gtErr.Error()
+			} else {
+				sqlResultData["gt_result"] = gtResult
+			}
+			
+			// 判断两个SQL是否等价
+			if predErr == nil && gtErr == nil && predResult.Success && gtResult.Success {
+				isEquiv, _ := isEquivalentSQL(result.Pred, result.GroundTruth)
+				sqlResultData["is_equivalent"] = isEquiv
+			}
+		} else {
+			// 对于模糊查询，不执行SQL
+			sqlResultData = map[string]interface{}{
+				"id":           result.ID,
+				"db_id":        result.DBName,
+				"question":     result.Question,
+				"pred":         result.Pred,
+				"ground_truth": result.GroundTruth,
+				"is_correct":   result.IsCorrect,
+				"error_reason": result.ErrorReason,
+				"is_ambiguous": true,
+			}
+			
+			// 添加模糊查询的元数据
+			if len(result.Metadata) > 0 {
+				sqlResultData["metadata"] = result.Metadata
+			}
+		}
+		
+		// 如果存在思考过程，添加到结果中
+		if result.Thinking != "" {
+			sqlResultData["thinking"] = result.Thinking
+		}
+		
 		// 创建结果文件
 		resultFileName := fmt.Sprintf("%d.json", result.ID)
 		resultFilePath := filepath.Join(sqlResultsDir, resultFileName)
-
-		// 构建结果JSON
-		sqlResultData := map[string]interface{}{
-			"id":            result.ID,
-			"db_id":         result.DBName,
-			"question":      result.Question,
-			"pred_sql":      result.Pred,
-			"gt_sql":        result.GroundTruth,
-			"pred_result":   nil,
-			"pred_error":    nil,
-			"gt_result":     nil,
-			"gt_error":      nil,
-			"is_equivalent": false,
-		}
-
-		// 添加预测SQL的执行结果
-		if predErr != nil {
-			sqlResultData["pred_error"] = predErr.Error()
-		} else {
-			sqlResultData["pred_result"] = predResult
-		}
-
-		// 添加标准SQL的执行结果
-		if gtErr != nil {
-			sqlResultData["gt_error"] = gtErr.Error()
-		} else {
-			sqlResultData["gt_result"] = gtResult
-		}
-
-		// 判断两个SQL是否等价
-		if predErr == nil && gtErr == nil && predResult.Success && gtResult.Success {
-			isEquiv, _ := isEquivalentSQL(result.Pred, result.GroundTruth)
-			sqlResultData["is_equivalent"] = isEquiv
-		}
-
+		
 		// 写入结果文件
 		resultJSON, err := json.MarshalIndent(sqlResultData, "", "  ")
 		if err != nil {
 			fmt.Printf("序列化SQL结果失败: %v\n", err)
 			continue
 		}
-
+		
 		if err := os.WriteFile(resultFilePath, resultJSON, 0644); err != nil {
 			fmt.Printf("写入SQL结果文件失败: %v\n", err)
 			continue
 		}
+		
+		// 如果是模糊查询，保存到模糊问题目录
+		if result.Pred == "AMBIGUOUS_QUERY" {
+			ambiguousFilePath := filepath.Join(ambiguousQueriesDir, fmt.Sprintf("ambiguous_%d.json", result.ID))
+			if err := os.WriteFile(ambiguousFilePath, resultJSON, 0644); err != nil {
+				fmt.Printf("写入模糊问题文件失败: %v\n", err)
+			}
+		}
+		
+		// 如果SQL查询不正确且不是模糊查询，保存到错误SQL查询目录
+		if !result.IsCorrect && result.Pred != "AMBIGUOUS_QUERY" {
+			incorrectFilePath := filepath.Join(incorrectQueriesDir, fmt.Sprintf("incorrect_%d.json", result.ID))
+			if err := os.WriteFile(incorrectFilePath, resultJSON, 0644); err != nil {
+				fmt.Printf("写入错误SQL查询文件失败: %v\n", err)
+			}
+		}
 	}
-
+	
 	fmt.Printf("SQL执行结果已保存到: %s\n", sqlResultsDir)
+	fmt.Printf("错误SQL查询结果已保存到: %s\n", incorrectQueriesDir)
+	fmt.Printf("模糊问题结果已保存到: %s\n", ambiguousQueriesDir)
 }
 
 // 判断两个SQL语句是否等价（通过比较执行结果）
