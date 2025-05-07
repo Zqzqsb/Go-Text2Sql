@@ -43,3 +43,5 @@ config_*
 
 # SQL结果目录
 **/sql_results/
+**/incorrect_queries/
+**/ambiguous_queries/
