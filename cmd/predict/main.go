@@ -40,6 +40,7 @@ type SQLResult struct {
 var currentDBName string
 var currentDataset *dataset.Dataset
 var ambiguousQueriesCount int // 统计模糊查询数量
+var usePostgreSQL bool // 是否使用PostgreSQL
 
 func main() {
 	// 命令行参数
@@ -56,7 +57,16 @@ func main() {
 	useIndex := flag.Bool("use-index", true, "使用样例索引而不是ID")
 	disableThinking := flag.Bool("disable-thinking", false, "禁用思考过程")
 	preserveChineseTerms := flag.Bool("preserve-chinese", true, "保留中文词汇不翻译")
+	dbType := flag.String("db-type", "sqlite", "数据库类型 (sqlite, postgres)")
 	flag.Parse()
+
+	// 检查数据库类型
+	usePostgreSQL = strings.ToLower(*dbType) == "postgres" || strings.ToLower(*dbType) == "postgresql"
+	if usePostgreSQL {
+		fmt.Println("使用PostgreSQL数据库")
+	} else {
+		fmt.Println("使用SQLite数据库")
+	}
 
 	// 检查必要参数
 	if *datasetPath == "" && *datasetType == "" {
@@ -690,24 +700,42 @@ func isEquivalentSQL(sql1 string, sql2 string) (bool, string) {
 
 	// 构建数据库路径
 	dbPath := filepath.Join(currentDataset.BaseDir, currentDataset.DBDir, dbName)
-
-	// 检查数据库文件是否存在
-	sqlitePath := filepath.Join(dbPath, dbName+".sqlite")
-	if _, err := os.Stat(sqlitePath); os.IsNotExist(err) {
-		// 尝试直接使用 dbName.sqlite 文件
-		altDbPath := filepath.Join(filepath.Dir(dbPath), dbName+".sqlite")
-		if _, err := os.Stat(altDbPath); os.IsNotExist(err) {
-			fmt.Printf("数据库文件不存在: %s\n", sqlitePath)
-			// 如果数据库文件不存在，则回退到文本比较
-			return false, "数据库文件不存在"
+	
+	// 声明变量存储结果
+	var result1, result2 *eval.ExecResult
+	var err1, err2 error
+	
+	// 根据数据库类型决定连接方式
+	if usePostgreSQL || strings.Contains(dbPath, "ccsipder_pg") || strings.Contains(dbPath, "ccspider_pg") {
+		// 使用PostgreSQL
+		// 创建PostgreSQL配置
+		pgConfig := eval.DefaultPGConfig()
+		// 设置当前的数据库名称
+		pgConfig.DBName = dbName
+		
+		// 执行两个SQL查询
+		result1, err1 = eval.ExecSQL(pgConfig.GetConnectionString(), sql1)
+		result2, err2 = eval.ExecSQL(pgConfig.GetConnectionString(), sql2)
+	} else {
+		// 使用SQLite
+		// 检查数据库文件是否存在
+		sqlitePath := filepath.Join(dbPath, dbName+".sqlite")
+		if _, err := os.Stat(sqlitePath); os.IsNotExist(err) {
+			// 尝试直接使用 dbName.sqlite 文件
+			altDbPath := filepath.Join(filepath.Dir(dbPath), dbName+".sqlite")
+			if _, err := os.Stat(altDbPath); os.IsNotExist(err) {
+				fmt.Printf("数据库文件不存在: %s\n", sqlitePath)
+				// 如果数据库文件不存在，则回退到文本比较
+				return false, "数据库文件不存在"
+			}
+			// 使用替代路径
+			sqlitePath = altDbPath
 		}
-		// 使用替代路径
-		sqlitePath = altDbPath
+		
+		// 执行两个SQL查询
+		result1, err1 = eval.ExecSQL(sqlitePath, sql1)
+		result2, err2 = eval.ExecSQL(sqlitePath, sql2)
 	}
-
-	// 执行两个SQL查询
-	result1, err1 := eval.ExecSQL(sqlitePath, sql1)
-	result2, err2 := eval.ExecSQL(sqlitePath, sql2)
 
 	// 如果任一查询执行失败，则认为它们不等价
 	if err1 != nil || err2 != nil {
