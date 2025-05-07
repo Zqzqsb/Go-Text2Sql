@@ -8,7 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/lib/pq"       // PostgreSQL驱动
+	_ "github.com/mattn/go-sqlite3" // SQLite驱动
 )
 
 // ExecResult 表示SQL执行结果
@@ -20,12 +21,37 @@ type ExecResult struct {
 
 // ExecSQL 执行SQL语句并返回结果
 func ExecSQL(dbPath string, sqlQuery string) (*ExecResult, error) {
-	// 打开数据库连接
-	db, err := sql.Open("sqlite3", dbPath)
+	var db *sql.DB
+	var err error
+	
+	// 检查是否为PostgreSQL连接字符串
+	if strings.HasPrefix(dbPath, "postgres://") || strings.HasPrefix(dbPath, "postgresql://") {
+		// 使用PostgreSQL连接
+		db, err = sql.Open("postgres", dbPath)
+	} else if strings.Contains(dbPath, "ccsipder_pg") || strings.Contains(dbPath, "ccspider_pg") {
+		// 使用默认PostgreSQL配置
+		pgConfig := DefaultPGConfig()
+		db, err = sql.Open("postgres", pgConfig.GetConnectionString())
+	} else {
+		// 默认使用SQLite连接
+		db, err = sql.Open("sqlite3", dbPath)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库连接失败: %w", err)
 	}
 	defer db.Close()
+	
+	// 测试连接
+	if err = db.Ping(); err != nil {
+		return nil, fmt.Errorf("无法连接到数据库: %w", err)
+	}
+	
+	// 对PostgreSQL连接修复SQL语法差异
+	if strings.HasPrefix(dbPath, "postgres://") || strings.HasPrefix(dbPath, "postgresql://") || 
+	   strings.Contains(dbPath, "ccsipder_pg") || strings.Contains(dbPath, "ccspider_pg") {
+		sqlQuery = fixSQLDialectDifferences(sqlQuery)
+	}
 
 	// 执行查询
 	rows, err := db.Query(sqlQuery)
@@ -174,4 +200,47 @@ func FormatExecResult(result *ExecResult) string {
 
 	builder.WriteString(fmt.Sprintf("\n共 %d 行数据", len(result.Rows)-1))
 	return builder.String()
+}
+
+// PostgreSQLConfig 定义PostgreSQL连接配置
+type PostgreSQLConfig struct {
+	Host     string
+	Port     int
+	User     string
+	Password string
+	DBName   string
+	SSLMode  string
+}
+
+// GetConnectionString 返回PostgreSQL连接字符串
+func (c *PostgreSQLConfig) GetConnectionString() string {
+	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s", 
+		c.User, c.Password, c.Host, c.Port, c.DBName, c.SSLMode)
+}
+
+// DefaultPGConfig 返回默认的PostgreSQL配置
+func DefaultPGConfig() PostgreSQLConfig {
+	return PostgreSQLConfig{
+		Host:     "localhost",
+		Port:     5432,
+		User:     "postgres",
+		Password: "password",
+		DBName:   "hr",
+		SSLMode:  "disable",
+	}
+}
+
+// fixSQLDialectDifferences 修复SQLite和PostgreSQL之间的SQL语法差异
+func fixSQLDialectDifferences(sqlQuery string) string {
+	// 将SQLite的自增语法转换为PostgreSQL语法
+	sqlQuery = strings.ReplaceAll(sqlQuery, "INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+
+	// 将SQLite的日期函数转换为PostgreSQL函数
+	sqlQuery = strings.ReplaceAll(sqlQuery, "DATETIME('now')", "CURRENT_TIMESTAMP")
+
+	// 对Filter子句进行处理（PostgreSQL支持FILTER，但语法可能有差异）
+	
+	// 其他特定于数据库的语法调整可以在这里添加
+
+	return sqlQuery
 }

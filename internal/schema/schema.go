@@ -39,6 +39,32 @@ type DatabaseSchema struct {
 
 // LoadSchema 从指定的路径加载数据库Schema
 func LoadSchema(dbPath string) (*DatabaseSchema, error) {
+	// 检查是否为PostgreSQL连接URI
+	if IsPostgresURI(dbPath) {
+		// 解析PostgreSQL连接URI
+		pgConfig, err := ParsePostgresURI(dbPath)
+		if err != nil {
+			return nil, fmt.Errorf("解析PostgreSQL URI失败: %w", err)
+		}
+		
+		// 从PostgreSQL加载Schema
+		return LoadSchemaFromPostgres(pgConfig)
+	}
+
+	// 处理特殊情况：基于路径判断是否使用PostgreSQL
+	if strings.Contains(dbPath, "ccsipder_pg") || strings.Contains(dbPath, "ccspider_pg") {
+		// 使用默认的PostgreSQL配置
+		pgConfig := DefaultPGConfig()
+		
+		// 提取数据库名称
+		dbName := filepath.Base(dbPath)
+		// 使用提取的数据库名称替代默认的
+		if dbName != "" {
+			pgConfig.DBName = dbName
+		}
+		return LoadSchemaFromPostgres(pgConfig)
+	}
+	
 	// 首先尝试使用JSON加载器加载schema
 	datasetDir := filepath.Dir(filepath.Dir(dbPath)) // 获取dataset目录路径
 	jsonFiles, err := FindJSONSchemaFiles(datasetDir)
