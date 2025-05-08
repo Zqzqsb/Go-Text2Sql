@@ -61,7 +61,7 @@ func ExtractFinalSQL(response string) string {
 
 // FormatPrompt 格式化提示
 func FormatPrompt(question string, schema string) string {
-	return `请将以下自然语言问题转换为SQL查询语句。
+	return `请将以下自然语言问题转换为 符合 PostgreSQL 语法的 SQL查询语句。
 
 数据库结构:
 ` + schema + `
