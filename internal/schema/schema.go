@@ -39,6 +39,10 @@ type DatabaseSchema struct {
 
 // LoadSchema 从指定的路径加载数据库Schema
 func LoadSchema(dbPath string) (*DatabaseSchema, error) {
+	// 注意: 我们不再使用数据库抽象层加载Schema
+	// 因为抽象层在其他文件中使用了这个函数
+	// 这里我们直接使用原有的加载途径
+	
 	// 检查是否为PostgreSQL连接URI
 	if IsPostgresURI(dbPath) {
 		// 解析PostgreSQL连接URI
@@ -65,7 +69,7 @@ func LoadSchema(dbPath string) (*DatabaseSchema, error) {
 		return LoadSchemaFromPostgres(pgConfig)
 	}
 	
-	// 首先尝试使用JSON加载器加载schema
+	// 如果数据库抽象层无法加载Schema，尝试使用JSON加载器
 	datasetDir := filepath.Dir(filepath.Dir(dbPath)) // 获取dataset目录路径
 	jsonFiles, err := FindJSONSchemaFiles(datasetDir)
 	
@@ -81,7 +85,7 @@ func LoadSchema(dbPath string) (*DatabaseSchema, error) {
 		}
 	}
 	
-	// 如果无法从JSON加载，尝试读取schema.json文件
+	// 如果仍然无法加载Schema，尝试读取schema.json文件
 	schemaPath := filepath.Join(dbPath, "schema.json")
 	data, err := os.ReadFile(schemaPath)
 	
