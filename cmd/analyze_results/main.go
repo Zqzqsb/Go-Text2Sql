@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/zqzqsb/gosql/internal/erroranalysis"
 )
 
 // SQLResult 结果结构
@@ -98,11 +99,11 @@ func main() {
 	for _, result := range results {
 		if result.Pred != "AMBIGUOUS_QUERY" && !result.IsCorrect {
 			incorrectResults = append(incorrectResults, result)
-			reason := classifyErrorReason(result.ErrorReason)
+			reason := erroranalysis.ClassifyErrorReason(result.ErrorReason)
 			detailedErrorReasons[reason]++
 
 			// 判断是列错误还是行错误
-			if isColumnError(reason) {
+			if erroranalysis.IsColumnError(reason) {
 				columnErrors++
 			} else {
 				rowErrors++
@@ -138,26 +139,50 @@ func main() {
 	fmt.Printf("- 列错误: %d (%.2f%%)\n", columnErrors, columnErrorPercentage)
 	fmt.Printf("- 行错误: %d (%.2f%%)\n", rowErrors, rowErrorPercentage)
 
-	// 输出详细错误原因统计（用于参考）
+	// 输出详细错误原因统计
 	fmt.Println("\n详细错误原因分布:")
+	
+	// 将错误原因按次数排序
 	type reasonCount struct {
 		reason string
 		count  int
+		example SQLResult // 每种错误类型的示例
 	}
-
-	var reasonCounts []reasonCount
-	for r, c := range detailedErrorReasons {
-		reasonCounts = append(reasonCounts, reasonCount{r, c})
+	
+	// 收集错误类型、计数和示例
+	reasonToExample := make(map[string]SQLResult)
+	for _, result := range incorrectResults {
+		reason := erroranalysis.ClassifyErrorReason(result.ErrorReason)
+		// 只保存第一个遇到的每类错误的示例
+		if _, exists := reasonToExample[reason]; !exists {
+			reasonToExample[reason] = result
+		}
 	}
-
-	// 按数量排序
-	sort.Slice(reasonCounts, func(i, j int) bool {
-		return reasonCounts[i].count > reasonCounts[j].count
+	
+	var sortedReasons []reasonCount
+	for reason, count := range detailedErrorReasons {
+		example, _ := reasonToExample[reason]
+		sortedReasons = append(sortedReasons, reasonCount{reason, count, example})
+	}
+	sort.Slice(sortedReasons, func(i, j int) bool {
+		return sortedReasons[i].count > sortedReasons[j].count
 	})
-
-	for _, rc := range reasonCounts {
-		percentage := float64(rc.count) * 100 / float64(totalErrorCount)
-		fmt.Printf("- %s: %d (%.2f%%)\n", rc.reason, rc.count, percentage)
+	
+	// 输出按频率排序的错误原因统计
+	for _, item := range sortedReasons {
+		percentage := float64(item.count) * 100 / float64(totalErrorCount)
+		fmt.Printf("- %s: %d (%.2f%%)\n", item.reason, item.count, percentage)
+	}
+	
+	// 输出错误类型示例
+	fmt.Println("\n各类错误示例:")
+	for _, item := range sortedReasons {
+		example := item.example
+		fmt.Printf("\n[%s] 错误示例 (%d 个类似错误):\n", item.reason, item.count)
+		fmt.Printf("  问题: %s\n", example.Question)
+		fmt.Printf("  生成SQL: %s\n", erroranalysis.TruncateString(example.Pred, 120))
+		fmt.Printf("  标准SQL: %s\n", erroranalysis.TruncateString(example.GroundTruth, 120))
+		fmt.Printf("  错误原因: %s\n", erroranalysis.TruncateString(example.ErrorReason, 120))
 	}
 
 	fmt.Println(strings.Repeat("=", 50))
@@ -181,131 +206,8 @@ func main() {
 	}
 }
 
-// classifyErrorReason 将错误原因分类为标准类别
-// 列错误: 列数错误、列选择错误、类型错误、列/字段错误
-// 行错误: 行数错误、语法错误、执行错误、表/关系错误、连接错误等
-func classifyErrorReason(errorReason string) string {
-	// 如果错误原因为空，返回"投影错误"
-	if errorReason == "" {
-		return "投影错误"
-	}
+// 注意：错误原因分类逻辑已移至 internal/erroranalysis 包中
 
-	// 检查是否是投影错误
-	if strings.Contains(errorReason, "SQL执行不成功") && !strings.Contains(errorReason, "语法") {
-		// 执行错误但不是语法错误，可能是投影错误
-		return "投影错误"
-	}
+// 注意：字符串处理功能已移至 internal/erroranalysis 包中
 
-	// 先分离行错误和列错误
-	rowCountRegex := regexp.MustCompile("(?i)(row|行).*(count|number|different|数|不同)|(行\\s*\\d+).*(列\\s*\\d+)\\s*的值不同")
-
-	// 检测行列数量错误
-	if rowCountRegex.MatchString(errorReason) && strings.Contains(errorReason, "行数不同") {
-		return "行数错误"
-	}
-	if regexp.MustCompile("列数不同: (\\d+) vs (\\d+)").MatchString(errorReason) {
-		return "列数错误"
-	}
-	if regexp.MustCompile("column.*(count|number).*different.*?(\\d+).*?(\\d+)").MatchString(errorReason) {
-		return "列数错误"
-	}
-
-	// 检测行中的列值错误
-	rowColValueRegex := regexp.MustCompile("行 (\\d+) 列 (\\d+) 的值不同")
-	if rowColValueRegex.MatchString(errorReason) {
-		matches := rowColValueRegex.FindStringSubmatch(errorReason)
-		row := matches[1]
-
-		// 如果是第1行的值不同，可能是列选择错误
-		if row == "1" {
-			return "列选择错误"
-		} else {
-			return "行值错误"
-		}
-	}
-
-	// 使用正则表达式匹配其他常见错误模式
-	syntaxErrorRegex := regexp.MustCompile(`(?i)(syntax|parse|token|valid|expect|illegal).*error`)
-	columnErrorRegex := regexp.MustCompile(`(?i)(column|field|attribute).*(not|unknown|missing|invalid)`)
-	tableErrorRegex := regexp.MustCompile(`(?i)(table|relation).*(not|unknown|missing|invalid)`)
-	joinErrorRegex := regexp.MustCompile(`(?i)(join|foreign key|relation|reference)`)
-	groupByErrorRegex := regexp.MustCompile(`(?i)(group by|aggregate|having)`)
-	orderByErrorRegex := regexp.MustCompile(`(?i)(order by|sort)`)
-	limitErrorRegex := regexp.MustCompile(`(?i)(limit|offset)`)
-	subqueryErrorRegex := regexp.MustCompile(`(?i)(subquery|sub-query|nested)`)
-	typeErrorRegex := regexp.MustCompile(`(?i)(type|conversion|cast|datatype)`)
-
-	// 匹配其他常见的错误类型
-	switch {
-	case syntaxErrorRegex.MatchString(errorReason):
-		return "语法错误"
-	case columnErrorRegex.MatchString(errorReason):
-		return "列/字段错误"
-	case tableErrorRegex.MatchString(errorReason):
-		return "表/关系错误"
-	case joinErrorRegex.MatchString(errorReason):
-		return "连接错误"
-	case groupByErrorRegex.MatchString(errorReason):
-		return "分组错误"
-	case orderByErrorRegex.MatchString(errorReason):
-		return "排序错误"
-	case limitErrorRegex.MatchString(errorReason):
-		return "限制错误"
-	case subqueryErrorRegex.MatchString(errorReason):
-		return "子查询错误"
-	case typeErrorRegex.MatchString(errorReason):
-		return "类型错误"
-	case strings.Contains(errorReason, "execution") || strings.Contains(errorReason, "执行"):
-		return "执行错误"
-	case strings.Contains(errorReason, "result") || strings.Contains(errorReason, "结果"):
-		return "结果不匹配"
-	default:
-		// 检查是否有行列值比较的错误，但没有标准形式
-		if strings.Contains(errorReason, "行") && strings.Contains(errorReason, "列") && strings.Contains(errorReason, "值不同") {
-			return "值不匹配错误"
-		}
-
-		// 如果不是已知类型，存储原始错误消息（截取前50个字符）
-		if len(errorReason) > 50 {
-			return errorReason[:50] + "..."
-		}
-		return errorReason
-	}
-}
-
-// isColumnError 判断错误原因是否属于列错误
-func isColumnError(reason string) bool {
-	// 没有错误原因的情况，这通常是投影列不匹配
-	if reason == "未知原因" || reason == "" {
-		// 判断为列错误（投影错误）
-		return true
-	}
-
-	// 列数错误
-	if strings.Contains(reason, "列数错误") {
-		return true
-	}
-
-	// 列选择错误
-	if strings.Contains(reason, "列选择错误") {
-		return true
-	}
-
-	// 类型错误通常与列有关
-	if strings.Contains(reason, "类型错误") {
-		return true
-	}
-
-	// 列/字段错误
-	if strings.Contains(reason, "列/字段错误") {
-		return true
-	}
-
-	// 投影错误 - 不同SELECT字段
-	if strings.Contains(reason, "不同\u003e") || strings.Contains(reason, "字段不匹配") {
-		return true
-	}
-
-	// 默认其他错误都算作行错误
-	return false
-}
+// 注意：错误类型判断功能已移至 internal/erroranalysis 包中

@@ -6,17 +6,15 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/zqzqsb/gosql/internal/agents/query_validator"
 	"github.com/zqzqsb/gosql/internal/config"
-	"github.com/zqzqsb/gosql/internal/database"
 	"github.com/zqzqsb/gosql/internal/dataset"
+	"github.com/zqzqsb/gosql/internal/erroranalysis"
 	"github.com/zqzqsb/gosql/internal/eval"
 	"github.com/zqzqsb/gosql/internal/llm"
 	"github.com/zqzqsb/gosql/internal/schema"
@@ -424,7 +422,41 @@ func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, examp
 	result.Metadata["total_tokens"] = response.TotalTokens
 
 	// 判断预测的SQL与标准答案是否一致
-	result.IsCorrect, result.ErrorReason = isEquivalentSQL(result.Pred, result.GroundTruth)
+	// 重新构建数据库路径
+	// 使用=而非:=，因为dbPath已经在函数前面声明过
+	dbPath = filepath.Join(ds.BaseDir, ds.DBDir, dbID)
+	
+	// 根据数据库类型决定路径
+	var fullDBPath string
+	
+	if usePostgreSQL {
+		// PostgreSQL模式直接使用特殊前缀路径
+		fullDBPath = "pg:" + dbID
+	} else if strings.Contains(dbPath, "ccsipder_pg") || strings.Contains(dbPath, "ccspider_pg") ||
+		strings.Contains(dbPath, "pg_hr") || strings.Contains(dbPath, "postgres_") {
+		// 对于具有 PostgreSQL 特征的路径，也使用 PostgreSQL 模式
+		fullDBPath = dbPath
+	} else {
+		// SQLite模式需要检查文件是否存在
+		sqlitePath := filepath.Join(dbPath, dbID+".sqlite")
+		if _, err := os.Stat(sqlitePath); os.IsNotExist(err) {
+			// 尝试直接使用 dbName.sqlite 文件
+			altDbPath := filepath.Join(filepath.Dir(dbPath), dbID+".sqlite")
+			// 使用赋值而非声明，因为err已经在上文中声明
+			if _, err = os.Stat(altDbPath); os.IsNotExist(err) {
+				result.IsCorrect = false
+				result.ErrorReason = "数据库文件不存在"
+				return result
+			}
+			// 使用替代路径
+			fullDBPath = altDbPath
+		} else {
+			fullDBPath = sqlitePath
+		}
+	}
+	
+	// 使用统一的错误分析包判断SQL等价性
+	result.IsCorrect, result.ErrorReason = erroranalysis.IsEquivalentSQL(fullDBPath, result.Pred, result.GroundTruth)
 
 	return result
 }
@@ -635,7 +667,9 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 			
 			// 判断两个SQL是否等价
 			if predErr == nil && gtErr == nil && predResult.Success && gtResult.Success {
-				isEquiv, _ := isEquivalentSQL(result.Pred, result.GroundTruth)
+				// 使用统一的错误分析包判断SQL等价性
+				var isEquiv bool
+				isEquiv, _ = erroranalysis.IsEquivalentSQL(fullDBPath, result.Pred, result.GroundTruth)
 				sqlResultData["is_equivalent"] = isEquiv
 			}
 		} else {
@@ -700,145 +734,6 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 	fmt.Printf("模糊问题结果已保存到: %s\n", ambiguousQueriesDir)
 }
 
-// 判断两个SQL语句是否等价（通过比较执行结果）
-func isEquivalentSQL(sql1 string, sql2 string) (bool, string) {
-	// 如果SQL语句完全相同（忽略大小写和空格），则认为它们等价
-	if normalizeSQL(sql1) == normalizeSQL(sql2) {
-		return true, ""
-	}
+// 注意：此函数已移至 internal/erroranalysis 包
 
-	// 获取当前正在处理的数据库路径
-	dbName := currentDBName
-	if dbName == "" {
-		// 如果没有当前数据库名称，则无法执行SQL查询
-		return false, "未找到当前数据库名称"
-	}
-
-	// 构建数据库路径
-	dbPath := filepath.Join(currentDataset.BaseDir, currentDataset.DBDir, dbName)
-	
-	// 声明变量存储结果
-	var result1, result2 *eval.ExecResult
-	var err1, err2 error
-	
-	// 使用数据库抽象层判断等价性
-	// 首先创建数据库执行器实例
-	executor := database.NewDBExecutor()
-	
-	// 确定完整数据库路径
-	var fullDBPath string
-	
-	// 根据数据库类型决定路径
-	if usePostgreSQL {
-		// 对于显式指定的 PostgreSQL，使用特殊前缀路径
-		// 这将触发 NewDBConfigFromPath 使用默认 PostgreSQL 配置
-		fullDBPath = "pg:" + dbName
-		fmt.Printf("使用 PostgreSQL 模式，数据库: %s\n", dbName)
-	} else if strings.Contains(dbPath, "ccsipder_pg") || strings.Contains(dbPath, "ccspider_pg") ||
-		strings.Contains(dbPath, "pg_hr") || strings.Contains(dbPath, "postgres_") {
-		// 对于具有 PostgreSQL 特征的路径，也使用 PostgreSQL 模式
-		fullDBPath = dbPath
-		fmt.Printf("检测到 PostgreSQL 路径特征: %s\n", dbPath)
-	} else {
-		// 对于SQLite，需要指定文件路径
-		sqlitePath := filepath.Join(dbPath, dbName+".sqlite")
-		if _, err := os.Stat(sqlitePath); os.IsNotExist(err) {
-			// 尝试直接使用 dbName.sqlite 文件
-			altDbPath := filepath.Join(filepath.Dir(dbPath), dbName+".sqlite")
-			if _, err := os.Stat(altDbPath); os.IsNotExist(err) {
-				fmt.Printf("数据库文件不存在: %s\n", sqlitePath)
-				// 如果数据库文件不存在，则回退到文本比较
-				return false, "数据库文件不存在"
-			}
-			// 使用替代路径
-			fullDBPath = altDbPath
-		} else {
-			fullDBPath = sqlitePath
-		}
-	}
-	
-	// 尝试使用数据库抽象层判断等价性
-	isEquivalent, err := executor.IsEquivalentSQL(fullDBPath, sql1, sql2)
-	if err == nil {
-		return isEquivalent, ""
-	}
-	
-	// 如果抽象层判断失败，回退到原有方式
-	// 执行两个SQL查询
-	result1, err1 = eval.ExecSQL(fullDBPath, sql1)
-	result2, err2 = eval.ExecSQL(fullDBPath, sql2)
-
-	// 如果任一查询执行失败，则认为它们不等价
-	if err1 != nil || err2 != nil {
-		fmt.Printf("SQL执行错误: %v, %v\n", err1, err2)
-		return false, fmt.Sprintf("SQL执行错误: %v, %v", err1, err2)
-	}
-
-	if !result1.Success || !result2.Success {
-		fmt.Printf("SQL执行不成功: %v, %v\n", result1.Error, result2.Error)
-		return false, fmt.Sprintf("SQL执行不成功: %v, %v", result1.Error, result2.Error)
-	}
-
-	// 比较结果行数（不包括列名行）
-	if len(result1.Rows) != len(result2.Rows) {
-		fmt.Printf("结果行数不同: %d vs %d\n", len(result1.Rows), len(result2.Rows))
-		return false, fmt.Sprintf("结果行数不同: %d vs %d", len(result1.Rows), len(result2.Rows))
-	}
-
-	// 如果只有列名行，则认为结果为空，此时两个查询等价
-	if len(result1.Rows) == 1 {
-		return true, ""
-	}
-
-	// 比较结果内容（忽略列名）
-	for i := 1; i < len(result1.Rows); i++ {
-		if len(result1.Rows[i]) != len(result2.Rows[i]) {
-			fmt.Printf("行 %d 的列数不同: %d vs %d\n", i, len(result1.Rows[i]), len(result2.Rows[i]))
-			return false, fmt.Sprintf("行 %d 的列数不同: %d vs %d", i, len(result1.Rows[i]), len(result2.Rows[i]))
-		}
-
-		// 比较每一行的内容
-		for j := 0; j < len(result1.Rows[i]); j++ {
-			// 尝试将字符串转换为数字进行比较
-			val1 := strings.TrimSpace(result1.Rows[i][j])
-			val2 := strings.TrimSpace(result2.Rows[i][j])
-
-			// 如果两个值完全相同，则继续比较下一个值
-			if val1 == val2 {
-				continue
-			}
-
-			// 尝试将值转换为浮点数进行比较
-			float1, err1 := strconv.ParseFloat(val1, 64)
-			float2, err2 := strconv.ParseFloat(val2, 64)
-			if err1 == nil && err2 == nil {
-				// 如果两个浮点数相等（允许一定的误差），则继续比较下一个值
-				if math.Abs(float1-float2) < 1e-10 {
-					continue
-				}
-			}
-
-			// 如果值不相等，则认为两个查询不等价
-			fmt.Printf("行 %d 列 %d 的值不同: '%s' vs '%s'\n", i, j, val1, val2)
-			return false, fmt.Sprintf("行 %d 列 %d 的值不同: '%s' vs '%s'", i, j, val1, val2)
-		}
-	}
-
-	fmt.Println("SQL查询等价")
-	// 所有检查都通过，认为两个SQL查询等价
-	return true, ""
-}
-
-// 标准化SQL语句
-func normalizeSQL(sql string) string {
-	// 转换为小写
-	sql = strings.ToLower(sql)
-
-	// 移除分号
-	sql = strings.TrimSuffix(sql, ";")
-
-	// 移除多余的空格
-	sql = strings.Join(strings.Fields(sql), " ")
-
-	return sql
-}
+// 注意：此函数已移至 internal/erroranalysis 包
