@@ -12,6 +12,7 @@ CONFIG="configs/config.yaml"
 SPLIT="test"
 OUTPUT_DIR="results"
 DISABLE_THINKING=false
+DB_TYPE="sqlite"  # 默认数据库类型
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -64,6 +65,14 @@ while [[ $# -gt 0 ]]; do
       DISABLE_THINKING="${1#*=}"
       shift
       ;;
+    --db-type=*)
+      DB_TYPE="${1#*=}"
+      shift
+      ;;
+    --db-type)
+      DB_TYPE="$2"
+      shift 2
+      ;;
     *)
       # 保存其他参数
       ARGS+=("$1")
@@ -99,6 +108,7 @@ echo "  --config=$CONFIG"
 echo "  --split=$SPLIT"
 echo "  --output-dir=$OUTPUT_DIR"
 echo "  --disable-thinking=$DISABLE_THINKING"
+echo "  --db-type=$DB_TYPE"
 echo "  其他参数: ${ARGS[*]}"
 
 ./bin/gosql-predict \
@@ -113,4 +123,5 @@ echo "  其他参数: ${ARGS[*]}"
   --split "$SPLIT" \
   --output-dir "$OUTPUT_DIR" \
   --disable-thinking="$DISABLE_THINKING" \
+  --db-type="$DB_TYPE" \
   "${ARGS[@]}"
