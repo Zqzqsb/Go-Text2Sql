@@ -116,8 +116,9 @@ func NormalizeSQL(sql string) string {
 // - string: 标准化的错误类别
 func ClassifyErrorReason(errorReason string) string {
 	// 检查是否是空错误原因
+	// 空错误原因通常意味着列选择不同（投影错误）
 	if errorReason == "" {
-		return "未知原因"
+		return "投影错误"
 	}
 
 	// 检查是否是标准答案本身就有错误
@@ -128,8 +129,8 @@ func ClassifyErrorReason(errorReason string) string {
 		return "参考答案有语法错误"
 	}
 
-	// 检查是否是投影错误（列选择不同）
-	if errorReason == "未知原因" || errorReason == "" {
+	// 在之前版本中可能已经标记为未知原因
+	if errorReason == "未知原因" {
 		return "投影错误"
 	}
 
