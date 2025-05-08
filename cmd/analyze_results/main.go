@@ -185,9 +185,15 @@ func main() {
 // 列错误: 列数错误、列选择错误、类型错误、列/字段错误
 // 行错误: 行数错误、语法错误、执行错误、表/关系错误、连接错误等
 func classifyErrorReason(errorReason string) string {
-	// 如果错误原因为空，返回“未知原因”
+	// 如果错误原因为空，返回"投影错误"
 	if errorReason == "" {
-		return "未知原因"
+		return "投影错误"
+	}
+
+	// 检查是否是投影错误
+	if strings.Contains(errorReason, "SQL执行不成功") && !strings.Contains(errorReason, "语法") {
+		// 执行错误但不是语法错误，可能是投影错误
+		return "投影错误"
 	}
 
 	// 先分离行错误和列错误
@@ -269,6 +275,12 @@ func classifyErrorReason(errorReason string) string {
 
 // isColumnError 判断错误原因是否属于列错误
 func isColumnError(reason string) bool {
+	// 没有错误原因的情况，这通常是投影列不匹配
+	if reason == "未知原因" || reason == "" {
+		// 判断为列错误（投影错误）
+		return true
+	}
+
 	// 列数错误
 	if strings.Contains(reason, "列数错误") {
 		return true
@@ -286,6 +298,11 @@ func isColumnError(reason string) bool {
 
 	// 列/字段错误
 	if strings.Contains(reason, "列/字段错误") {
+		return true
+	}
+
+	// 投影错误 - 不同SELECT字段
+	if strings.Contains(reason, "不同\u003e") || strings.Contains(reason, "字段不匹配") {
 		return true
 	}
 
