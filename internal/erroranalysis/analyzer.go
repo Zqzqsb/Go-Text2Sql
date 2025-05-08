@@ -115,38 +115,46 @@ func NormalizeSQL(sql string) string {
 // 返回:
 // - string: 标准化的错误类别
 func ClassifyErrorReason(errorReason string) string {
-	// 检查是否是空错误原因
-	// 空错误原因通常意味着列选择不同（投影错误）
-	if errorReason == "" {
-		return "投影错误"
-	}
+	// 错误分类原则：
+	// 1. 行错误拥有最高优先级 - 包括行数错误、执行错误、语法错误等
+	// 2. 列错误只有在行数一致的情况下才能被判定
 
-	// 检查是否是标准答案本身就有错误
+	// --- 第一级优先级：行错误 ---
+
+	// 1. 空错误原因特殊处理 - 只有确定不存在行错误时才被判定为投影错误
+	// 不放在开头，因为要先排除是否是行错误
+
+	// 2. 语法错误检测（最高优先级）
 	if strings.Contains(errorReason, "SQL执行不成功") && 
 		(strings.Contains(errorReason, "near") || 
 		strings.Contains(errorReason, "syntax error")) {
-		// 检测到常见的语法错误模式
 		return "参考答案有语法错误"
 	}
 
-	// 在之前版本中可能已经标记为未知原因
-	if errorReason == "未知原因" {
-		return "投影错误"
+	// 3. 执行错误检测
+	if strings.Contains(errorReason, "SQL执行错误") || 
+		strings.Contains(errorReason, "execution error") {
+		return "执行错误"
 	}
 
-	// 检测行数不同错误
-	rowCountRegex := regexp.MustCompile("结果行数不同: (\\d+) vs (\\d+)")
-	if rowCountRegex.MatchString(errorReason) && strings.Contains(errorReason, "行数不同") {
+	// 4. 行数错误检测
+	rowDiffRegex := regexp.MustCompile("结果行数不同: (\\d+) vs (\\d+)")
+	if rowDiffRegex.MatchString(errorReason) || strings.Contains(errorReason, "行数不同") {
 		return "行数错误"
 	}
-	if regexp.MustCompile("列数不同: (\\d+) vs (\\d+)").MatchString(errorReason) {
+
+	// --- 第二级优先级：列错误（只有行数一致才有意义）---
+
+	// 5. 列数错误检测
+	colDiffRegex := regexp.MustCompile("列数不同: (\\d+) vs (\\d+)")
+	if colDiffRegex.MatchString(errorReason) {
 		return "列数错误"
 	}
 	if regexp.MustCompile("column.*(count|number).*different.*?(\\d+).*?(\\d+)").MatchString(errorReason) {
 		return "列数错误"
 	}
 
-	// 检测行中的列值错误
+	// 6. 列值错误检测
 	rowColValueRegex := regexp.MustCompile("行 (\\d+) 列 (\\d+) 的值不同")
 	if rowColValueRegex.MatchString(errorReason) {
 		matches := rowColValueRegex.FindStringSubmatch(errorReason)
@@ -160,7 +168,13 @@ func ClassifyErrorReason(errorReason string) string {
 		}
 	}
 
-	// 使用正则表达式匹配其他常见错误模式
+	// 7. 最后处理空错误原因，更可能是投影错误
+	// 只有在确定不存在行错误的情况下才这样判定
+	if errorReason == "" || errorReason == "未知原因" {
+		return "投影错误"
+	}
+
+	// 8. 其他类型错误检测（使用正则表达式匹配其他常见错误模式）
 	syntaxErrorRegex := regexp.MustCompile(`(?i)(syntax|parse|token|valid|expect|illegal).*error`)
 	columnErrorRegex := regexp.MustCompile(`(?i)(column|field|attribute).*(not|unknown|missing|invalid)`)
 	tableErrorRegex := regexp.MustCompile(`(?i)(table|relation).*(not|unknown|missing|invalid)`)
