@@ -15,6 +15,7 @@ import (
 
 	"github.com/zqzqsb/gosql/internal/agents/query_validator"
 	"github.com/zqzqsb/gosql/internal/config"
+	"github.com/zqzqsb/gosql/internal/database"
 	"github.com/zqzqsb/gosql/internal/dataset"
 	"github.com/zqzqsb/gosql/internal/eval"
 	"github.com/zqzqsb/gosql/internal/llm"
@@ -563,18 +564,33 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 		
 		// 构建数据库路径
 		dbPath := filepath.Join(currentDataset.BaseDir, currentDataset.DBDir, result.DBName)
-		sqlitePath := filepath.Join(dbPath, result.DBName+".sqlite")
+		var fullDBPath string
 		
-		// 检查数据库文件是否存在
-		if _, err := os.Stat(sqlitePath); os.IsNotExist(err) {
-			// 尝试直接使用 dbName.sqlite 文件
-			altDbPath := filepath.Join(filepath.Dir(dbPath), result.DBName+".sqlite")
-			if _, err := os.Stat(altDbPath); os.IsNotExist(err) {
-				fmt.Printf("数据库文件不存在: %s，跳过生成SQL结果\n", sqlitePath)
-				continue
+		// 根据数据库类型决定路径
+		if usePostgreSQL {
+			// PostgreSQL模式直接使用特殊前缀路径
+			fullDBPath = "pg:" + result.DBName
+			fmt.Printf("评估使用 PostgreSQL 模式，数据库: %s\n", result.DBName)
+		} else if strings.Contains(dbPath, "ccsipder_pg") || strings.Contains(dbPath, "ccspider_pg") ||
+			strings.Contains(dbPath, "pg_hr") || strings.Contains(dbPath, "postgres_") {
+			// 对于具有 PostgreSQL 特征的路径，也使用 PostgreSQL 模式
+			fullDBPath = dbPath
+			fmt.Printf("评估检测到 PostgreSQL 路径特征: %s\n", dbPath)
+		} else {
+			// SQLite模式需要检查文件是否存在
+			sqlitePath := filepath.Join(dbPath, result.DBName+".sqlite")
+			if _, err := os.Stat(sqlitePath); os.IsNotExist(err) {
+				// 尝试直接使用 dbName.sqlite 文件
+				altDbPath := filepath.Join(filepath.Dir(dbPath), result.DBName+".sqlite")
+				if _, err := os.Stat(altDbPath); os.IsNotExist(err) {
+					fmt.Printf("数据库文件不存在: %s，跳过生成SQL结果\n", sqlitePath)
+					continue
+				}
+				// 使用替代路径
+				fullDBPath = altDbPath
+			} else {
+				fullDBPath = sqlitePath
 			}
-			// 使用替代路径
-			sqlitePath = altDbPath
 		}
 		
 		// 执行预测的SQL和标准SQL
@@ -584,8 +600,8 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 		
 		// 对于非模糊查询，执行SQL并评估结果
 		if result.Pred != "AMBIGUOUS_QUERY" {
-			predResult, predErr = eval.ExecSQL(sqlitePath, result.Pred)
-			gtResult, gtErr := eval.ExecSQL(sqlitePath, result.GroundTruth)
+			predResult, predErr = eval.ExecSQL(fullDBPath, result.Pred)
+			gtResult, gtErr := eval.ExecSQL(fullDBPath, result.GroundTruth)
 			
 			// 构建结果JSON
 			sqlResultData = map[string]interface{}{
@@ -705,20 +721,26 @@ func isEquivalentSQL(sql1 string, sql2 string) (bool, string) {
 	var result1, result2 *eval.ExecResult
 	var err1, err2 error
 	
-	// 根据数据库类型决定连接方式
-	if usePostgreSQL || strings.Contains(dbPath, "ccsipder_pg") || strings.Contains(dbPath, "ccspider_pg") {
-		// 使用PostgreSQL
-		// 创建PostgreSQL配置
-		pgConfig := eval.DefaultPGConfig()
-		// 设置当前的数据库名称
-		pgConfig.DBName = dbName
-		
-		// 执行两个SQL查询
-		result1, err1 = eval.ExecSQL(pgConfig.GetConnectionString(), sql1)
-		result2, err2 = eval.ExecSQL(pgConfig.GetConnectionString(), sql2)
+	// 使用数据库抽象层判断等价性
+	// 首先创建数据库执行器实例
+	executor := database.NewDBExecutor()
+	
+	// 确定完整数据库路径
+	var fullDBPath string
+	
+	// 根据数据库类型决定路径
+	if usePostgreSQL {
+		// 对于显式指定的 PostgreSQL，使用特殊前缀路径
+		// 这将触发 NewDBConfigFromPath 使用默认 PostgreSQL 配置
+		fullDBPath = "pg:" + dbName
+		fmt.Printf("使用 PostgreSQL 模式，数据库: %s\n", dbName)
+	} else if strings.Contains(dbPath, "ccsipder_pg") || strings.Contains(dbPath, "ccspider_pg") ||
+		strings.Contains(dbPath, "pg_hr") || strings.Contains(dbPath, "postgres_") {
+		// 对于具有 PostgreSQL 特征的路径，也使用 PostgreSQL 模式
+		fullDBPath = dbPath
+		fmt.Printf("检测到 PostgreSQL 路径特征: %s\n", dbPath)
 	} else {
-		// 使用SQLite
-		// 检查数据库文件是否存在
+		// 对于SQLite，需要指定文件路径
 		sqlitePath := filepath.Join(dbPath, dbName+".sqlite")
 		if _, err := os.Stat(sqlitePath); os.IsNotExist(err) {
 			// 尝试直接使用 dbName.sqlite 文件
@@ -729,13 +751,22 @@ func isEquivalentSQL(sql1 string, sql2 string) (bool, string) {
 				return false, "数据库文件不存在"
 			}
 			// 使用替代路径
-			sqlitePath = altDbPath
+			fullDBPath = altDbPath
+		} else {
+			fullDBPath = sqlitePath
 		}
-		
-		// 执行两个SQL查询
-		result1, err1 = eval.ExecSQL(sqlitePath, sql1)
-		result2, err2 = eval.ExecSQL(sqlitePath, sql2)
 	}
+	
+	// 尝试使用数据库抽象层判断等价性
+	isEquivalent, err := executor.IsEquivalentSQL(fullDBPath, sql1, sql2)
+	if err == nil {
+		return isEquivalent, ""
+	}
+	
+	// 如果抽象层判断失败，回退到原有方式
+	// 执行两个SQL查询
+	result1, err1 = eval.ExecSQL(fullDBPath, sql1)
+	result2, err2 = eval.ExecSQL(fullDBPath, sql2)
 
 	// 如果任一查询执行失败，则认为它们不等价
 	if err1 != nil || err2 != nil {
