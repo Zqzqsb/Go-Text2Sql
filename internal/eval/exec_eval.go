@@ -1,15 +1,13 @@
 package eval
 
 import (
-	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
-	_ "github.com/lib/pq"       // PostgreSQL驱动
-	_ "github.com/mattn/go-sqlite3" // SQLite驱动
+	"github.com/zqzqsb/gosql/internal/database"
 )
 
 // ExecResult 表示SQL执行结果
@@ -21,75 +19,42 @@ type ExecResult struct {
 
 // ExecSQL 执行SQL语句并返回结果
 func ExecSQL(dbPath string, sqlQuery string) (*ExecResult, error) {
-	var db *sql.DB
-	var err error
+	// 创建DBExecutor实例
+	executor := database.NewDBExecutor()
 	
-	// 检查是否为PostgreSQL连接字符串
-	if strings.HasPrefix(dbPath, "postgres://") || strings.HasPrefix(dbPath, "postgresql://") {
-		// 使用PostgreSQL连接
-		db, err = sql.Open("postgres", dbPath)
-	} else if strings.Contains(dbPath, "ccsipder_pg") || strings.Contains(dbPath, "ccspider_pg") {
-		// 使用默认PostgreSQL配置
-		pgConfig := DefaultPGConfig()
-		db, err = sql.Open("postgres", pgConfig.GetConnectionString())
-	} else {
-		// 默认使用SQLite连接
-		db, err = sql.Open("sqlite3", dbPath)
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("打开数据库连接失败: %w", err)
-	}
-	defer db.Close()
-	
-	// 测试连接
-	if err = db.Ping(); err != nil {
-		return nil, fmt.Errorf("无法连接到数据库: %w", err)
-	}
-	
-	// 对PostgreSQL连接修复SQL语法差异
-	if strings.HasPrefix(dbPath, "postgres://") || strings.HasPrefix(dbPath, "postgresql://") || 
-	   strings.Contains(dbPath, "ccsipder_pg") || strings.Contains(dbPath, "ccspider_pg") {
-		sqlQuery = fixSQLDialectDifferences(sqlQuery)
-	}
-
-	// 执行查询
-	rows, err := db.Query(sqlQuery)
+	// 通过抽象层执行SQL
+	results, err := executor.ExecSQL(dbPath, sqlQuery)
 	if err != nil {
 		return &ExecResult{
 			Success: false,
 			Error:   err.Error(),
 		}, nil
 	}
-	defer rows.Close()
 
 	// 获取列名
-	columns, err := rows.Columns()
-	if err != nil {
-		return nil, fmt.Errorf("获取列名失败: %w", err)
+	var columns []string
+	if len(results) > 0 {
+		columns = make([]string, 0, len(results[0]))
+		for colName := range results[0] {
+			columns = append(columns, colName)
+		}
+	} else {
+		// 无结果
+		return &ExecResult{
+			Success: true,
+			Rows:    [][]string{},
+		}, nil
 	}
 
 	// 准备结果数据
-	var result [][]string
-	result = append(result, columns)
+	var resultRows [][]string
+	resultRows = append(resultRows, columns) // 添加列名行
 
-	// 读取行数据
-	values := make([]interface{}, len(columns))
-	valuePtrs := make([]interface{}, len(columns))
-	for i := range columns {
-		valuePtrs[i] = &values[i]
-	}
-
-	// 读取所有行
-	for rows.Next() {
-		err := rows.Scan(valuePtrs...)
-		if err != nil {
-			return nil, fmt.Errorf("读取行数据失败: %w", err)
-		}
-
-		// 转换为字符串
+	// 处理每一行数据
+	for _, row := range results {
 		var rowData []string
-		for _, val := range values {
+		for _, colName := range columns {
+			val := row[colName]
 			var strVal string
 			if val == nil {
 				strVal = "NULL"
@@ -98,16 +63,12 @@ func ExecSQL(dbPath string, sqlQuery string) (*ExecResult, error) {
 			}
 			rowData = append(rowData, strVal)
 		}
-		result = append(result, rowData)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("遍历行数据失败: %w", err)
+		resultRows = append(resultRows, rowData)
 	}
 
 	return &ExecResult{
 		Success: true,
-		Rows:    result,
+		Rows:    resultRows,
 	}, nil
 }
 
@@ -202,45 +163,4 @@ func FormatExecResult(result *ExecResult) string {
 	return builder.String()
 }
 
-// PostgreSQLConfig 定义PostgreSQL连接配置
-type PostgreSQLConfig struct {
-	Host     string
-	Port     int
-	User     string
-	Password string
-	DBName   string
-	SSLMode  string
-}
-
-// GetConnectionString 返回PostgreSQL连接字符串
-func (c *PostgreSQLConfig) GetConnectionString() string {
-	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s", 
-		c.User, c.Password, c.Host, c.Port, c.DBName, c.SSLMode)
-}
-
-// DefaultPGConfig 返回默认的PostgreSQL配置
-func DefaultPGConfig() PostgreSQLConfig {
-	return PostgreSQLConfig{
-		Host:     "localhost",
-		Port:     5432,
-		User:     "postgres",
-		Password: "password",
-		DBName:   "hr",
-		SSLMode:  "disable",
-	}
-}
-
-// fixSQLDialectDifferences 修复SQLite和PostgreSQL之间的SQL语法差异
-func fixSQLDialectDifferences(sqlQuery string) string {
-	// 将SQLite的自增语法转换为PostgreSQL语法
-	sqlQuery = strings.ReplaceAll(sqlQuery, "INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
-
-	// 将SQLite的日期函数转换为PostgreSQL函数
-	sqlQuery = strings.ReplaceAll(sqlQuery, "DATETIME('now')", "CURRENT_TIMESTAMP")
-
-	// 对Filter子句进行处理（PostgreSQL支持FILTER，但语法可能有差异）
-	
-	// 其他特定于数据库的语法调整可以在这里添加
-
-	return sqlQuery
-}
+// 注意：下面的PostgreSQL配置相关代码已经移到internal/database包中
