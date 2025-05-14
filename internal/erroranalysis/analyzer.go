@@ -131,9 +131,13 @@ func ClassifyErrorReason(errorReason string) string {
 		return "参考答案有语法错误"
 	}
 
-	// 3. 执行错误检测
+	// 3. 执行错误检测 - 增强检测能力
 	if strings.Contains(errorReason, "SQL执行错误") || 
-		strings.Contains(errorReason, "execution error") {
+		strings.Contains(errorReason, "SQL执行失败") || 
+		strings.Contains(errorReason, "execution error") ||
+		strings.Contains(errorReason, "database") && strings.Contains(errorReason, "does not exist") ||
+		strings.Contains(errorReason, "loan_user") && strings.Contains(errorReason, "does not exist") ||
+		strings.Contains(errorReason, "数据库不存在") {
 		return "执行错误"
 	}
 
