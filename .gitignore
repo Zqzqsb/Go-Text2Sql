@@ -30,7 +30,9 @@ secrets.yaml
 credentials.json
 
 # 数据目录（可能很大）
-/data/
+/data/*
+!/data/ccspider_pg/
+!/data/ccspider_pg/**
 
 # 日志文件
 *.log
@@ -45,3 +47,4 @@ config_*
 **/sql_results/
 **/incorrect_queries/
 **/ambiguous_queries/
+
