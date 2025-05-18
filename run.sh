@@ -13,6 +13,7 @@ SPLIT="test"
 OUTPUT_DIR="results"
 DISABLE_THINKING=false
 DB_TYPE="sqlite"  # 默认数据库类型
+FIELDS_INFO_TYPE=""  # 字段信息类型：空、fields或description
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -30,10 +31,6 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --end=*)
-      END="${1#*=}"
-      shift
-      ;;
-    --dataset=*)
       DATASET="${1#*=}"
       shift
       ;;
@@ -73,6 +70,14 @@ while [[ $# -gt 0 ]]; do
       DB_TYPE="$2"
       shift 2
       ;;
+    --fields-info-type=*)
+      FIELDS_INFO_TYPE="${1#*=}"
+      shift
+      ;;
+    --fields-info-type)
+      FIELDS_INFO_TYPE="$2"
+      shift 2
+      ;;
     *)
       # 保存其他参数
       ARGS+=("$1")
@@ -109,6 +114,7 @@ echo "  --split=$SPLIT"
 echo "  --output-dir=$OUTPUT_DIR"
 echo "  --disable-thinking=$DISABLE_THINKING"
 echo "  --db-type=$DB_TYPE"
+echo "  --fields-info-type=$FIELDS_INFO_TYPE"
 echo "  其他参数: ${ARGS[*]}"
 
 ./bin/gosql-predict \
@@ -124,4 +130,5 @@ echo "  其他参数: ${ARGS[*]}"
   --output-dir "$OUTPUT_DIR" \
   --disable-thinking="$DISABLE_THINKING" \
   --db-type="$DB_TYPE" \
+  --fields-info-type="$FIELDS_INFO_TYPE" \
   "${ARGS[@]}"
