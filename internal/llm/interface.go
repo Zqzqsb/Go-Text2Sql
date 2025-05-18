@@ -60,6 +60,7 @@ type Options struct {
 	DisableThinking bool
 	SystemPrompt   string
 	PreserveChineseTerms bool // 是否保留中文词汇不翻译
+	FieldsInfoType string      // 字段信息类型: "", "fields", 或 "description"
 }
 
 // DefaultOptions 返回默认选项
