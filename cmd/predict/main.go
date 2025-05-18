@@ -36,20 +36,16 @@ type SQLResult struct {
 	SequenceNum int                    `json:"sequence_num,omitempty"` // 处理顺序
 }
 
-var currentDBName string
 var currentDataset *dataset.Dataset
 var ambiguousQueriesCount int // 统计模糊查询数量
-var usePostgreSQL bool // 是否使用PostgreSQL
+var usePostgreSQL bool        // 是否使用PostgreSQL
 
 func main() {
 	// 命令行参数
-	configPath := flag.String("config", "configs/config.yaml", "配置文件路径")
+	llmConfigPath := flag.String("config", "", "LLM 接入点配置文件")
 	datasetPath := flag.String("dataset", "", "数据集配置文件路径")
-	datasetType := flag.String("dataset-type", "", "数据集类型 (spider, cspider)")
 	split := flag.String("split", "test", "数据集分割 (train, dev, test)")
 	outputDir := flag.String("output-dir", "results", "输出目录")
-	provider := flag.String("provider", "", "LLM提供商 (openai, azure, gemini)")
-	model := flag.String("model", "", "模型名称")
 	startID := flag.Int("start", 0, "起始样例ID或索引")
 	endID := flag.Int("end", -1, "结束样例ID或索引")
 	targetID := flag.Int("id", -1, "目标样例ID")
@@ -57,6 +53,8 @@ func main() {
 	disableThinking := flag.Bool("disable-thinking", false, "禁用思考过程")
 	preserveChineseTerms := flag.Bool("preserve-chinese", true, "保留中文词汇不翻译")
 	dbType := flag.String("db-type", "sqlite", "数据库类型 (sqlite, postgres)")
+	fieldsInfoType := flag.String("fields-info-type", "", "字段信息类型 (empty, fields, description)")
+
 	flag.Parse()
 
 	// 检查数据库类型
@@ -68,30 +66,17 @@ func main() {
 	}
 
 	// 检查必要参数
-	if *datasetPath == "" && *datasetType == "" {
-		fmt.Println("错误: 必须提供数据集配置文件路径 (--dataset) 或数据集类型 (--dataset-type)")
+	if *datasetPath == "" {
+		fmt.Println("错误: 必须提供数据集配置文件路径 (--dataset)")
 		flag.Usage()
 		os.Exit(1)
 	}
 
 	// 加载配置
-	cfg, err := config.LoadConfig(*configPath)
+	cfg, err := config.LoadConfig(*llmConfigPath)
 	if err != nil {
 		fmt.Printf("加载配置失败: %v\n", err)
 		os.Exit(1)
-	}
-
-	// 根据数据集类型设置数据集路径
-	if *datasetPath == "" && *datasetType != "" {
-		switch *datasetType {
-		case "spider":
-			*datasetPath = "configs/datasets/spider.json"
-		case "cspider":
-			*datasetPath = "configs/datasets/cspider.json"
-		default:
-			fmt.Printf("不支持的数据集类型: %s\n", *datasetType)
-			os.Exit(1)
-		}
 	}
 
 	// 加载数据集
@@ -129,15 +114,8 @@ func main() {
 
 	// 创建LLM客户端
 	var client llm.LLM
-	if *provider != "" {
-		// 如果命令行指定了提供商，使用命令行参数
-		modelName := *model
-		client, err = factory.CreateWithProvider(llm.Provider(*provider), modelName)
-	} else {
-		// 否则使用配置文件中的默认设置
-		client, err = factory.Create()
-	}
 
+	client, err = factory.Create()
 	if err != nil {
 		fmt.Printf("创建LLM客户端失败: %v\n", err)
 		os.Exit(1)
@@ -150,6 +128,17 @@ func main() {
 	options := factory.GetDefaultOptions()
 	options.DisableThinking = *disableThinking
 	options.PreserveChineseTerms = *preserveChineseTerms
+	options.FieldsInfoType = *fieldsInfoType
+
+	// 检查和打印字段信息类型
+	if options.FieldsInfoType != "" {
+		if options.FieldsInfoType == "fields" || options.FieldsInfoType == "description" {
+			fmt.Printf("启用字段信息类型: %s\n", options.FieldsInfoType)
+		} else {
+			fmt.Printf("警告: 不支持的字段信息类型 %s，将不使用字段信息\n", options.FieldsInfoType)
+			options.FieldsInfoType = ""
+		}
+	}
 
 	// 生成结果文件名
 	timestamp := time.Now().Format("20060102_150405")
@@ -221,14 +210,6 @@ func main() {
 	for i, example := range processedExamples {
 		fmt.Printf("处理样例 %d/%d...\n", i+1, len(processedExamples))
 
-		// 获取当前数据库名称
-		dbName, ok := example["db_id"].(string)
-		if !ok {
-			fmt.Printf("样例中没有数据库名称\n")
-			continue
-		}
-		currentDBName = dbName
-
 		// 生成SQL
 		result := generateSQL(client, options, currentDataset, example)
 		result.SequenceNum = i + 1 // 设置处理顺序
@@ -244,7 +225,7 @@ func main() {
 	fmt.Printf("\n结果已保存到: %s\n", outputFile)
 
 	// 生成预测文件
-	generatePredictionFile(outputFile, *split, predFile)
+	generatePredictionFile(outputFile,  predFile)
 
 	// 统计评测指标
 	fmt.Println(strings.Repeat("=", 50))
@@ -252,7 +233,7 @@ func main() {
 	fmt.Printf("总样例数: %d\n", len(results))
 	fmt.Printf("模糊查询数: %d (%.2f%%)\n", ambiguousQueriesCount, float64(ambiguousQueriesCount)*100/float64(len(results)))
 	fmt.Printf("有效样例数: %d (排除模糊查询)\n", len(results)-ambiguousQueriesCount)
-	
+
 	if len(results)-ambiguousQueriesCount > 0 {
 		correctCount := 0
 		for _, result := range results {
@@ -318,25 +299,25 @@ func stringHash(s string) uint32 {
 func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, example map[string]interface{}) SQLResult {
 	// 提取样例信息
 	id := getExampleID(example)
-	
+
 	// 获取数据库ID和问题
 	dbID, _ := example["db_id"].(string)
 	question, _ := example["question"].(string)
-	
+
 	// 创建QueryValidator检测模糊查询
 	validator := query_validator.NewQueryValidator()
 	validator.WithLLM(client) // 使用同一个LLM客户端
-	
+
 	// 检测查询是否模糊
 	isAmbiguous, ambiguousType, confidence := validator.DetectAmbiguity(context.Background(), question)
-	
+
 	// 如果是模糊查询，返回特殊的SQLResult
 	if isAmbiguous {
 		ambiguousQueriesCount++ // 增加模糊查询计数
-		
+
 		// 获取澄清问题
 		clarificationQuestions := query_validator.GenerateClarificationQuestions(question)
-		
+
 		return SQLResult{
 			ID:          id,
 			DBName:      dbID,
@@ -353,10 +334,10 @@ func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, examp
 			},
 		}
 	}
-	
+
 	// 如果不是模糊查询，继续正常处理
 	question = example["question"].(string)
-	
+
 	result := SQLResult{
 		ID:          id,
 		DBName:      dbID,
@@ -380,8 +361,57 @@ func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, examp
 	// 保存数据库Schema信息
 	result.DBSchema = schemaPrompt
 
+	// 检查是否是PostgreSQL数据库并且数据里包含字段信息
+	useFieldsInfo := usePostgreSQL && options.FieldsInfoType != ""
+
+	// 参数初始化
+	var fieldsInfo string
+	useDescription := false
+
+	// 如果启用字段信息
+	if useFieldsInfo && example != nil {
+		// 检查result_fields和result_fields_description字段
+		switch options.FieldsInfoType {
+		case "fields":
+			// 使用精确字段列表
+			if fields, ok := example["result_fields"].([]interface{}); ok && len(fields) > 0 {
+				// 将字段转换为字符串
+				fieldStrs := make([]string, 0, len(fields))
+				for _, f := range fields {
+					if fs, ok := f.(string); ok {
+						fieldStrs = append(fieldStrs, fs)
+					}
+				}
+				fieldsInfo = strings.Join(fieldStrs, ", ")
+				useDescription = false
+
+				// 添加到元数据
+				result.Metadata["fields_info_type"] = "fields"
+				result.Metadata["fields_info"] = fieldsInfo
+			}
+		case "description":
+			// 使用字段描述
+			if description, ok := example["result_fields_description"].(string); ok && description != "" {
+				fieldsInfo = description
+				useDescription = true
+
+				// 添加到元数据
+				result.Metadata["fields_info_type"] = "description"
+				result.Metadata["fields_info"] = fieldsInfo
+			}
+		}
+	}
+
 	// 格式化提示
-	prompt := utils.FormatPrompt(question, schemaPrompt)
+	var prompt string
+	if useFieldsInfo && fieldsInfo != "" {
+		prompt = utils.FormatPromptWithFields(question, schemaPrompt, fieldsInfo, useDescription)
+		fmt.Printf("使用字段%s: %s\n",
+			map[bool]string{true: "描述", false: "列表"}[useDescription],
+			fieldsInfo)
+	} else {
+		prompt = utils.FormatPrompt(question, schemaPrompt)
+	}
 
 	// 向LLM发送请求
 	startTime := time.Now()
@@ -425,10 +455,10 @@ func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, examp
 	// 重新构建数据库路径
 	// 使用=而非:=，因为dbPath已经在函数前面声明过
 	dbPath = filepath.Join(ds.BaseDir, ds.DBDir, dbID)
-	
+
 	// 根据数据库类型决定路径
 	var fullDBPath string
-	
+
 	if usePostgreSQL {
 		// PostgreSQL模式直接使用特殊前缀路径
 		fullDBPath = "pg:" + dbID
@@ -454,7 +484,7 @@ func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, examp
 			fullDBPath = sqlitePath
 		}
 	}
-	
+
 	// 使用统一的错误分析包判断SQL等价性
 	result.IsCorrect, result.ErrorReason = erroranalysis.IsEquivalentSQL(fullDBPath, result.Pred, result.GroundTruth)
 
@@ -514,9 +544,9 @@ func printResult(result SQLResult) {
 }
 
 // 生成预测文件
-func generatePredictionFile(jsonlFile string, split string, predFile string) {
+func generatePredictionFile(jsonlFile string, predFile string) {
 	var results []SQLResult
-	
+
 	// 读取jsonl文件
 	file, err := os.Open(jsonlFile)
 	if err != nil {
@@ -524,7 +554,7 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 		return
 	}
 	defer file.Close()
-	
+
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -535,12 +565,12 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 		}
 		results = append(results, result)
 	}
-	
+
 	if err := scanner.Err(); err != nil {
 		fmt.Printf("读取文件失败: %v\n", err)
 		return
 	}
-	
+
 	// 生成预测文件
 	predFileObj, err := os.Create(predFile)
 	if err != nil {
@@ -548,7 +578,7 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 		return
 	}
 	defer predFileObj.Close()
-	
+
 	for _, result := range results {
 		if result.Pred == "AMBIGUOUS_QUERY" {
 			// 对于模糊查询，写入特殊标记
@@ -557,9 +587,9 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 			fmt.Fprintf(predFileObj, "%s\t%d\n", result.Pred, result.ID)
 		}
 	}
-	
+
 	fmt.Printf("预测文件已保存到: %s\n", predFile)
-	
+
 	// 创建sql_results子文件夹
 	resultDir := filepath.Dir(jsonlFile)
 	sqlResultsDir := filepath.Join(resultDir, "sql_results")
@@ -569,7 +599,7 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 			os.Exit(1)
 		}
 	}
-	
+
 	// 创建错误SQL查询目录
 	incorrectQueriesDir := filepath.Join(resultDir, "incorrect_queries")
 	if _, err := os.Stat(incorrectQueriesDir); os.IsNotExist(err) {
@@ -578,7 +608,7 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 			os.Exit(1)
 		}
 	}
-	
+
 	// 创建模糊问题目录
 	ambiguousQueriesDir := filepath.Join(resultDir, "ambiguous_queries")
 	if _, err := os.Stat(ambiguousQueriesDir); os.IsNotExist(err) {
@@ -587,17 +617,17 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 			os.Exit(1)
 		}
 	}
-	
+
 	// 为每条SQL生成执行结果文件
 	for _, result := range results {
 		if result.DBName == "" {
 			continue // 跳过没有数据库名称的结果
 		}
-		
+
 		// 构建数据库路径
 		dbPath := filepath.Join(currentDataset.BaseDir, currentDataset.DBDir, result.DBName)
 		var fullDBPath string
-		
+
 		// 根据数据库类型决定路径
 		if usePostgreSQL {
 			// PostgreSQL模式直接使用特殊前缀路径
@@ -624,17 +654,17 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 				fullDBPath = sqlitePath
 			}
 		}
-		
+
 		// 执行预测的SQL和标准SQL
 		var predResult *eval.ExecResult
 		var predErr error
 		var sqlResultData map[string]interface{}
-		
+
 		// 对于非模糊查询，执行SQL并评估结果
 		if result.Pred != "AMBIGUOUS_QUERY" {
 			predResult, predErr = eval.ExecSQL(fullDBPath, result.Pred)
 			gtResult, gtErr := eval.ExecSQL(fullDBPath, result.GroundTruth)
-			
+
 			// 构建结果JSON
 			sqlResultData = map[string]interface{}{
 				"id":            result.ID,
@@ -650,21 +680,21 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 				"is_correct":    result.IsCorrect,
 				"error_reason":  result.ErrorReason,
 			}
-			
+
 			// 添加预测SQL的执行结果
 			if predErr != nil {
 				sqlResultData["pred_error"] = predErr.Error()
 			} else {
 				sqlResultData["pred_result"] = predResult
 			}
-			
+
 			// 添加标准SQL的执行结果
 			if gtErr != nil {
 				sqlResultData["gt_error"] = gtErr.Error()
 			} else {
 				sqlResultData["gt_result"] = gtResult
 			}
-			
+
 			// 判断两个SQL是否等价
 			if predErr == nil && gtErr == nil && predResult.Success && gtResult.Success {
 				// 使用统一的错误分析包判断SQL等价性
@@ -684,34 +714,34 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 				"error_reason": result.ErrorReason,
 				"is_ambiguous": true,
 			}
-			
+
 			// 添加模糊查询的元数据
 			if len(result.Metadata) > 0 {
 				sqlResultData["metadata"] = result.Metadata
 			}
 		}
-		
+
 		// 如果存在思考过程，添加到结果中
 		if result.Thinking != "" {
 			sqlResultData["thinking"] = result.Thinking
 		}
-		
+
 		// 创建结果文件
 		resultFileName := fmt.Sprintf("%d.json", result.ID)
 		resultFilePath := filepath.Join(sqlResultsDir, resultFileName)
-		
+
 		// 写入结果文件
 		resultJSON, err := json.MarshalIndent(sqlResultData, "", "  ")
 		if err != nil {
 			fmt.Printf("序列化SQL结果失败: %v\n", err)
 			continue
 		}
-		
+
 		if err := os.WriteFile(resultFilePath, resultJSON, 0644); err != nil {
 			fmt.Printf("写入SQL结果文件失败: %v\n", err)
 			continue
 		}
-		
+
 		// 如果是模糊查询，保存到模糊问题目录
 		if result.Pred == "AMBIGUOUS_QUERY" {
 			ambiguousFilePath := filepath.Join(ambiguousQueriesDir, fmt.Sprintf("ambiguous_%d.json", result.ID))
@@ -719,7 +749,7 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 				fmt.Printf("写入模糊问题文件失败: %v\n", err)
 			}
 		}
-		
+
 		// 如果SQL查询不正确且不是模糊查询，保存到错误SQL查询目录
 		if !result.IsCorrect && result.Pred != "AMBIGUOUS_QUERY" {
 			incorrectFilePath := filepath.Join(incorrectQueriesDir, fmt.Sprintf("incorrect_%d.json", result.ID))
@@ -728,12 +758,8 @@ func generatePredictionFile(jsonlFile string, split string, predFile string) {
 			}
 		}
 	}
-	
+
 	fmt.Printf("SQL执行结果已保存到: %s\n", sqlResultsDir)
 	fmt.Printf("错误SQL查询结果已保存到: %s\n", incorrectQueriesDir)
 	fmt.Printf("模糊问题结果已保存到: %s\n", ambiguousQueriesDir)
 }
-
-// 注意：此函数已移至 internal/erroranalysis 包
-
-// 注意：此函数已移至 internal/erroranalysis 包
