@@ -1,9 +1,11 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/zqzqsb/gosql/internal/dbmodel"
 )
@@ -22,7 +24,10 @@ func NewDBExecutor() *DBExecutor {
 
 // ExecSQL 执行SQL查询，返回查询结果
 // 自动识别数据库类型并使用适当的适配器
+// 默认超时时间为1分钟
 func (e *DBExecutor) ExecSQL(dbPath string, sqlQuery string) ([]map[string]interface{}, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
 	// 创建配置
 	config := NewDBConfigFromPath(dbPath)
 	
@@ -39,9 +44,12 @@ func (e *DBExecutor) ExecSQL(dbPath string, sqlQuery string) ([]map[string]inter
 	}
 	defer db.Close()
 	
-	// 执行查询
-	rows, err := db.Query(adaptedSQL)
+	// 执行查询（带超时）
+	rows, err := db.QueryContext(ctx, adaptedSQL)
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("查询超时，超过1分钟: %w", err)
+		}
 		return nil, fmt.Errorf("SQL执行失败: %w", err)
 	}
 	defer rows.Close()
@@ -85,14 +93,44 @@ func (e *DBExecutor) IsEquivalentSQL(dbPath, sqlA, sqlB string) (bool, error) {
 	}
 	
 	// 执行两条SQL，如果结果相同，则认为等价
-	resultA, errA := e.ExecSQL(dbPath, sqlA)
-	if errA != nil {
-		return false, fmt.Errorf("执行第一条SQL失败: %w", errA)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute) // 两个SQL查询共享2分钟超时
+	defer cancel()
+	
+	// 使用通道来收集两个查询的结果
+	type queryResult struct {
+		result []map[string]interface{}
+		err    error
 	}
 	
-	resultB, errB := e.ExecSQL(dbPath, sqlB)
-	if errB != nil {
-		return false, fmt.Errorf("执行第二条SQL失败: %w", errB)
+	ch := make(chan queryResult, 2)
+	
+	// 并行执行两个查询
+	go func() {
+		result, err := e.ExecSQL(dbPath, sqlA)
+		ch <- queryResult{result, err}
+	}()
+	
+	go func() {
+		result, err := e.ExecSQL(dbPath, sqlB)
+		ch <- queryResult{result, err}
+	}()
+	
+	// 等待两个查询的结果
+	var resultA, resultB []map[string]interface{}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-ctx.Done():
+			return false, fmt.Errorf("查询超时，超过2分钟")
+		case r := <-ch:
+			if r.err != nil {
+				return false, fmt.Errorf("执行SQL失败: %w", r.err)
+			}
+			if resultA == nil {
+				resultA = r.result
+			} else {
+				resultB = r.result
+			}
+		}
 	}
 	
 	// 比较结果集
