@@ -97,10 +97,13 @@ type ErrorStatistics struct {
 	SyntaxErrorCount     int
 	ProjectionErrorCount int
 	DataErrorCount       int
+	RowErrorCount        int    // 专门用于行数错误统计
+	ReferenceErrorCount  int    // 参考答案有语法错误
+	ExecutionErrorCount  int    // 执行错误（预测SQL语法错误）
+	// 下面三个字段已不再使用，保留是为了向后兼容
 	OrderErrorCount      int
 	JoinErrorCount       int
 	ConditionErrorCount  int
 	OtherErrorCount      int
-	ExecutionErrorCount  int
 	ErrorCounts          []ErrorCount
 }

@@ -18,14 +18,39 @@ func LoadInputFile(filePath string) ([]InputResult, error) {
 	}
 	defer file.Close()
 
+	// 读取文件内容进行调试
+	fileContent, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("读取文件内容失败: %v", err)
+	}
+	fmt.Printf("文件大小: %d 字节\n", len(fileContent))
+
 	// 按行读取JSONL文件
 	var results []InputResult
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(strings.NewReader(string(fileContent)))
+	lineNum := 0
 	for scanner.Scan() {
-		line := scanner.Text()
+		lineNum++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue // 跳过空行
+		}
+
+		// 打印调试信息
+		fmt.Printf("处理第 %d 行, 长度: %d\n", lineNum, len(line))
+		if len(line) < 100 {
+			fmt.Printf("行内容: %s\n", line)
+		} else {
+			fmt.Printf("行内容(截断): %s...\n", line[:100])
+		}
+
 		var result InputResult
 		if err := json.Unmarshal([]byte(line), &result); err != nil {
-			fmt.Printf("解析行失败: %v, 行内容: %s\n", err, line)
+			fmt.Printf("解析行失败: %v, 行号: %d, 行内容: %s\n", err, lineNum, line)
+			// 尝试打印更详细的错误信息
+			if jsonErr, ok := err.(*json.SyntaxError); ok {
+				fmt.Printf("JSON语法错误位置: %d\n", jsonErr.Offset)
+			}
 			continue
 		}
 		results = append(results, result)
@@ -35,6 +60,7 @@ func LoadInputFile(filePath string) ([]InputResult, error) {
 		return nil, fmt.Errorf("读取文件失败: %v", err)
 	}
 
+	fmt.Printf("成功加载 %d 条记录\n", len(results))
 	return results, nil
 }
 

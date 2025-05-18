@@ -37,7 +37,6 @@ func NewSQLAnalyzer() *SQLAnalyzer {
 // 使用预先执行后的结果进行分析
 func (a *SQLAnalyzer) AnalyzeSQL(input InputResult, gtResult, predResult *ExecResult, gtErr, predErr error) *AnalysisResult {
 	// 调试输出：开始分析查询
-	fmt.Printf("\n开始分析 ID=%d, DB=%s\n", input.ID, input.DBName)
 	result := &AnalysisResult{
 		ID:           input.ID,
 		DBName:       input.DBName,
@@ -51,7 +50,7 @@ func (a *SQLAnalyzer) AnalyzeSQL(input InputResult, gtResult, predResult *ExecRe
 	}
 
 	// 检查是否为模糊查询
-	if input.Ambiguous != "" {
+	if input.Ambiguous == "True" {
 		result.ErrorReason = "模糊查询需要澄清"
 		result.ErrorType = "模糊查询"
 		a.Stats.AmbiguousCount++
@@ -77,14 +76,6 @@ func (a *SQLAnalyzer) AnalyzeSQL(input InputResult, gtResult, predResult *ExecRe
 		return result
 	}
 
-	// 调试输出：执行SQL前
-	fmt.Printf("执行标准SQL: %s\n", input.GTSQL)
-	fmt.Printf("执行预测SQL: %s\n", input.PredSQL)
-	
-	// 使用预先执行后的结果
-	// 调试输出：开始分析结果
-	fmt.Printf("\n开始分析 ID=%d, DB=%s\n", input.ID, input.DBName)
-
 	// 处理执行错误
 	if gtErr != nil {
 		// 调试输出：标准SQL执行错误
@@ -102,7 +93,7 @@ func (a *SQLAnalyzer) AnalyzeSQL(input InputResult, gtResult, predResult *ExecRe
 		} else {
 			result.ErrorReason = fmt.Sprintf("标准SQL执行错误: %v", gtErr)
 			result.ErrorType = "参考答案有语法错误"
-			a.Stats.SyntaxErrorCount++
+			a.Stats.ReferenceErrorCount++
 			return result
 		}
 	}
@@ -123,7 +114,7 @@ func (a *SQLAnalyzer) AnalyzeSQL(input InputResult, gtResult, predResult *ExecRe
 		} else {
 			result.ErrorReason = fmt.Sprintf("预测SQL执行错误: %v", predErr)
 			result.ErrorType = "执行错误"
-			a.Stats.SyntaxErrorCount++
+			a.Stats.ExecutionErrorCount++
 			return result
 		}
 	}
@@ -135,7 +126,7 @@ func (a *SQLAnalyzer) AnalyzeSQL(input InputResult, gtResult, predResult *ExecRe
 	if predResult.Success {
 		fmt.Printf("预测SQL执行成功，行数: %d\n", len(predResult.Rows)-1) // 减去标题行
 	}
-	
+
 	// 检查结果是否等价
 	isEquiv, errorReason := a.areResultsEquivalent(gtResult, predResult)
 
@@ -181,14 +172,14 @@ func (a *SQLAnalyzer) AnalyzeSQL(input InputResult, gtResult, predResult *ExecRe
 	fmt.Printf("\n%s===== 错误分析结果 =====%s\n", Bold, ColorReset)
 	fmt.Printf("%s错误原因:%s %s\n", Bold, ColorReset, errorReason)
 	fmt.Printf("%s分类结果:%s %s%s%s\n", Bold, ColorReset, errorColor, errorType, ColorReset)
-	
+
 	// 输出更详细的结果信息
 	if len(gtResult.Rows) > 0 && len(predResult.Rows) > 0 {
 		// 打印列信息
 		fmt.Printf("\n%s列信息对比:%s\n", Bold, ColorReset)
 		fmt.Printf("%s标准SQL列:%s %v\n", ColorBlue, ColorReset, gtResult.Rows[0])
 		fmt.Printf("%s预测SQL列:%s %v\n", ColorPurple, ColorReset, predResult.Rows[0])
-		
+
 		// 如果行数不多，打印部分数据行进行比较
 		maxRowsToPrint := 3 // 最多打印3行数据
 		rowsToPrint := minInt(len(gtResult.Rows)-1, len(predResult.Rows)-1, maxRowsToPrint)
@@ -205,7 +196,6 @@ func (a *SQLAnalyzer) AnalyzeSQL(input InputResult, gtResult, predResult *ExecRe
 			}
 		}
 	}
-	
 
 	// 更新统计信息
 	a.updateErrorStats(errorType)
@@ -253,7 +243,7 @@ func (a *SQLAnalyzer) classifyError(errorReason string) string {
 	}
 
 	// 结果对比阶段的差异（优先级低于上述错误）
-	
+
 	// 数据不一致错误
 	if strings.Contains(strings.ToLower(errorReason), "数据不匹配") ||
 		strings.Contains(strings.ToLower(errorReason), "数据不一致") {
@@ -305,23 +295,19 @@ func (a *SQLAnalyzer) updateErrorStats(errorType string) {
 	// 更新错误类型统计
 	switch errorType {
 	case "参考答案有语法错误":
-		a.Stats.SyntaxErrorCount++
+		// 参考答案错误应该单独计算，不计入SyntaxErrorCount
+		a.Stats.ReferenceErrorCount++
 	case "执行错误":
-		a.Stats.SyntaxErrorCount++ // 执行错误也属于语法错误的一种
+		// 预测SQL的执行错误计入语法错误
+		a.Stats.ExecutionErrorCount++
 	case "数据库连接错误":
 		a.Stats.DBNotExistCount++ // 数据库连接错误单独统计
 	case "行数错误":
-		a.Stats.DataErrorCount++
+		a.Stats.RowErrorCount++ // 使用专用的行数错误计数器
 	case "投影错误":
 		a.Stats.ProjectionErrorCount++
 	case "数据不一致错误":
 		a.Stats.DataErrorCount++
-	case "排序错误":
-		a.Stats.OrderErrorCount++
-	case "表连接错误":
-		a.Stats.JoinErrorCount++
-	case "查询条件错误":
-		a.Stats.ConditionErrorCount++
 	default:
 		a.Stats.OtherErrorCount++
 	}
@@ -384,48 +370,48 @@ func (a *SQLAnalyzer) areResultsEquivalent(result1, result2 *ExecResult) (bool, 
 	// 第一步：获取列名和列索引映射
 	headers1 := result1.Rows[0]
 	headers2 := result2.Rows[0]
-	
+
 	// 创建列名到索引的映射（不区分大小写）
 	headerToIndex1 := make(map[string]int)
 	headerToIndex2 := make(map[string]int)
-	
+
 	for i, h := range headers1 {
 		headerToIndex1[strings.ToLower(h)] = i
 	}
-	
+
 	for i, h := range headers2 {
 		headerToIndex2[strings.ToLower(h)] = i
 	}
-	
-	// 第二步：检查列名列表是否完全匹配（不考虑顺序）
+
+	// 第二步：检查行数是否相同
+	dataRows1 := len(result1.Rows) - 1 // 减去标题行
+	dataRows2 := len(result2.Rows) - 1 // 减去标题行
+
+	if dataRows1 != dataRows2 {
+		return false, fmt.Sprintf("行数不匹配: 标准SQL返回%d行, 预测SQL返回%d行",
+			dataRows1, dataRows2)
+	}
+
+	// 第三步：检查列名列表是否完全匹配（不考虑顺序）
 	if len(headerToIndex1) != len(headerToIndex2) {
 		return false, fmt.Sprintf("列数不匹配: 标准SQL返回%d列, 预测SQL返回%d列",
 			len(headerToIndex1), len(headerToIndex2))
 	}
-	
+
 	// 检查每个列名是否存在于两个结果中
 	for header := range headerToIndex1 {
 		if _, exists := headerToIndex2[header]; !exists {
 			return false, "列名不匹配"
 		}
 	}
-	
-	// 第三步：检查行数是否相同
-	dataRows1 := len(result1.Rows) - 1 // 减去标题行
-	dataRows2 := len(result2.Rows) - 1 // 减去标题行
-	
-	if dataRows1 != dataRows2 {
-		return false, fmt.Sprintf("行数不匹配: 标准SQL返回%d行, 预测SQL返回%d行",
-			dataRows1, dataRows2)
-	}
-	
+
 	// 第四步：对结果集进行转换，使其可比较（不考虑列顺序）
 	// 对于每一行，创建一个按列名排序的值数组
-	
+
 	// 转换结果集到可比较的格式
 	convertedRows1 := make([]map[string]string, dataRows1)
 	convertedRows2 := make([]map[string]string, dataRows2)
-	
+
 	// 将标准SQL结果转化为按列名索引的数据
 	for i := 1; i <= dataRows1; i++ {
 		rowMap := make(map[string]string)
@@ -436,7 +422,7 @@ func (a *SQLAnalyzer) areResultsEquivalent(result1, result2 *ExecResult) (bool, 
 		}
 		convertedRows1[i-1] = rowMap
 	}
-	
+
 	// 将预测SQL结果转化为按列名索引的数据
 	for i := 1; i <= dataRows2; i++ {
 		rowMap := make(map[string]string)
@@ -447,12 +433,12 @@ func (a *SQLAnalyzer) areResultsEquivalent(result1, result2 *ExecResult) (bool, 
 		}
 		convertedRows2[i-1] = rowMap
 	}
-	
+
 	// 第五步：比较数据内容（考虑行的顺序无关性）
 	// 首先将每一行转换为一个唯一的字符串表示
 	rowStrings1 := make(map[string]bool)
 	rowStrings2 := make(map[string]bool)
-	
+
 	for _, row := range convertedRows1 {
 		// 按列名字典序排序列名
 		sortedColumns := make([]string, 0, len(row))
@@ -460,18 +446,18 @@ func (a *SQLAnalyzer) areResultsEquivalent(result1, result2 *ExecResult) (bool, 
 			sortedColumns = append(sortedColumns, colName)
 		}
 		sort.Strings(sortedColumns)
-		
+
 		// 按排序后的列名创建行字符串
 		values := make([]string, 0, len(sortedColumns))
 		for _, colName := range sortedColumns {
 			values = append(values, fmt.Sprintf("%s=%s", colName, row[colName]))
 		}
-		
+
 		// 使用空格连接列值
 		rowStr := strings.Join(values, "|")
 		rowStrings1[rowStr] = true
 	}
-	
+
 	for _, row := range convertedRows2 {
 		// 使用相同的方法处理预测SQL结果
 		sortedColumns := make([]string, 0, len(row))
@@ -479,28 +465,28 @@ func (a *SQLAnalyzer) areResultsEquivalent(result1, result2 *ExecResult) (bool, 
 			sortedColumns = append(sortedColumns, colName)
 		}
 		sort.Strings(sortedColumns)
-		
+
 		values := make([]string, 0, len(sortedColumns))
 		for _, colName := range sortedColumns {
 			values = append(values, fmt.Sprintf("%s=%s", colName, row[colName]))
 		}
-		
+
 		rowStr := strings.Join(values, "|")
 		rowStrings2[rowStr] = true
 	}
-	
+
 	// 比较两个结果集的行集合
 	if len(rowStrings1) != len(rowStrings2) {
 		return false, "数据行数不匹配"
 	}
-	
+
 	// 检查每一行是否存在于另一个结果集中
 	for rowStr := range rowStrings1 {
 		if !rowStrings2[rowStr] {
 			return false, "数据不一致错误"
 		}
 	}
-	
+
 	// 通过所有检查，认为结果等价
 	return true, ""
 }

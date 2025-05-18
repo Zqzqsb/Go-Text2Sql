@@ -179,13 +179,19 @@ func (r *Reporter) PrintSummary(stats *ErrorStatistics, totalFiles int) {
 		fmt.Printf("%-20s %s%10d%s %15.2f%%\n", name, color, count, ColorReset, percent)
 	}
 	
+	// 预测SQL的语法错误
 	printErrorType("语法错误", stats.SyntaxErrorCount, ColorYellow)
+	// 参考答案的语法错误
+	printErrorType("参考答案语法错误", stats.ReferenceErrorCount, ColorYellow)
+	// 投影错误（列选择错误）
 	printErrorType("投影错误", stats.ProjectionErrorCount, ColorPurple)
+	// 行数错误（专门统计）
+	printErrorType("行数错误", stats.RowErrorCount, ColorBlue)
+	// 数据不一致错误
 	printErrorType("数据不一致", stats.DataErrorCount, ColorCyan)
-	printErrorType("行数错误", stats.DataErrorCount, ColorBlue)
-	printErrorType("排序错误", stats.OrderErrorCount, ColorRed)
-	printErrorType("表连接错误", stats.JoinErrorCount, ColorRed)
-	printErrorType("查询条件错误", stats.ConditionErrorCount, ColorRed)
+	// 执行错误（已计入语法错误，这里单独显示）
+	printErrorType("执行错误", stats.ExecutionErrorCount, ColorRed)
+	// 其他错误
 	printErrorType("其他错误", stats.OtherErrorCount, ColorRed)
 	
 	// 报告保存路径

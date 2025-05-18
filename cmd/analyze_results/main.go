@@ -25,7 +25,7 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
-	
+
 	// 如果db-type为sqlite或未指定，必须提供数据库目录
 	if (*dbType == "" || *dbType == "sqlite") && *dbDir == "" {
 		fmt.Println("错误: 使用SQLite时必须指定数据库目录路径 (--db-dir)")
@@ -75,16 +75,16 @@ func main() {
 
 	// 根据输入路径类型加载结果
 	if fileInfo.IsDir() {
-			// 仅从目录中的info.jsonl文件加载结果
+		// 仅从目录中的info.jsonl文件加载结果
 		jsonlPath := filepath.Join(*inputPath, "info.jsonl")
 		fmt.Printf("从目录中的info.jsonl加载结果: %s\n", jsonlPath)
-		
+
 		// 检查info.jsonl文件是否存在
 		if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
 			fmt.Printf("错误: info.jsonl文件不存在于指定目录: %s\n", *inputPath)
 			os.Exit(1)
 		}
-		
+
 		// 只加载info.jsonl文件
 		inputResults, err = LoadInputFile(jsonlPath)
 	} else {
@@ -111,8 +111,6 @@ func main() {
 
 	fmt.Printf("成功加载 %d 个结果\n", len(inputResults))
 
-	// 开始分析
-	fmt.Println("开始分析SQL查询...")
 	startTime := time.Now()
 
 	// 处理每个输入结果
@@ -133,6 +131,8 @@ func main() {
 		} else if *dbDir != "" {
 			// 如果是SQLite且指定了数据库目录
 			dbPath = filepath.Join(*dbDir, input.DBName)
+			dbPath = filepath.Join(dbPath, input.DBName)
+			dbPath += ".sqlite"
 		}
 
 		// 执行标准SQL
