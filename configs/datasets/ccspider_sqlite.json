@@ -1,6 +1,6 @@
 {
-  "type": "ccspider",
-  "name": "C-CSpider",
+  "type": "ccspider_sqlite",
+  "name": "C-CSpider In Sqlite",
   "base_dir": "./data/ccspider",
   "files": {
     "train": ["train.json"],

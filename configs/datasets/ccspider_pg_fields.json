@@ -1,11 +1,11 @@
 {
-  "type": "ccspider",
-  "name": "C-CSpider",
+  "type": "ccspider_pg",
+  "name": "C-CSpider In PG With Fields",
   "base_dir": "./data/ccspider_pg",
   "files": {
     "train": ["train.json"],
-    "dev": ["dev.json"],
-    "test": ["dev.json"],
+    "dev": ["dev_with_fields_with_descriptions.json"],
+    "test": ["dev_with_fields_with_descriptions.json"],
     "tables": "tables.json",
     "gold_sql": {
       "train": "train_gold.sql",
@@ -13,7 +13,7 @@
       "test": "dev_gold.sql"
     }
   },
-  "db_dir": "database",
+  "db_dir": "pg_in_docker", 
   "stats": {
     "train_count": 0,
     "dev_count": 0,

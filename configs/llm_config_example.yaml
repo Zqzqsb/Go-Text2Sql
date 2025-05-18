@@ -43,16 +43,3 @@ llm:
     # 可选：模型路径
     model_path: "/path/to/your/model"
 
-# 评估配置
-eval:
-  # 评估方法: exec, semantic
-  method: "exec"
-  # 数据库目录
-  db_dir: "./data/spider/database"
-
-# 数据集配置
-dataset:
-  # Spider数据集目录
-  spider_dir: "./data/spider"
-  # C-Spider数据集目录
-  cspider_dir: "./data/cspider"
