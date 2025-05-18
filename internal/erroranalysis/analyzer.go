@@ -1,275 +1,333 @@
+// Package erroranalysis 提供SQL错误分析功能
 package erroranalysis
 
 import (
 	"fmt"
 	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
-	"github.com/zqzqsb/gosql/internal/database"
 	"github.com/zqzqsb/gosql/internal/eval"
 )
 
-// IsEquivalentSQL 判断两个SQL语句是否等价（通过比较执行结果）
-// 参数:
-// - dbPath: 数据库路径，可以是SQLite文件路径或PostgreSQL连接字符串
-// - sql1, sql2: 要比较的两条SQL语句
-// 返回:
-// - bool: 是否等价
-// - string: 不等价时的错误原因
-func IsEquivalentSQL(dbPath string, sql1 string, sql2 string) (bool, string) {
-	// 如果SQL语句完全相同（忽略大小写和空格），则认为它们等价
+// ErrorType 定义SQL错误的分类类型
+type ErrorType string
+
+// 错误类型常量
+const (
+	ExactMatch    ErrorType = "精准匹配"   // SQL完全匹配
+	SemanticMatch ErrorType = "语义匹配"   // 结果集匹配（忽略顺序）
+	GTError       ErrorType = "参考答案错误" // 标准答案执行错误
+	ExecError     ErrorType = "执行错误"   // 语法错误等
+	RowError      ErrorType = "行错误"    // 行数不匹配等
+	ColumnError   ErrorType = "列错误"    // 列选择错误等
+	UnknownError  ErrorType = "未知错误"   // 未分类错误
+)
+
+// IsCorrect 判断结果是否正确（精准匹配或语义匹配）
+func IsCorrect(errType ErrorType) bool {
+	return errType == ExactMatch || errType == SemanticMatch
+}
+
+// IsColumnErrorType 判断是否为列错误
+func IsColumnErrorType(errType ErrorType) bool {
+	return errType == ColumnError
+}
+
+// IsRowErrorType 判断是否为行错误
+func IsRowErrorType(errType ErrorType) bool {
+	return errType == RowError || errType == ExecError || errType == GTError
+}
+
+// AnalysisResult 表示SQL分析结果
+type AnalysisResult struct {
+	Type        ErrorType // 错误类型
+	Description string    // 详细描述
+}
+
+// NormalizeSQL 标准化SQL以进行字符串比较
+func NormalizeSQL(sql string) string {
+	// 转为小写
+	sql = strings.ToLower(sql)
+	// 去除多余空格
+	sql = regexp.MustCompile(`\s+`).ReplaceAllString(sql, " ")
+	// 去除首尾空格
+	sql = strings.TrimSpace(sql)
+	return sql
+}
+
+// IsEquivalentSQL 判断两个SQL语句是否等价
+// 按照优先级：
+// 1. 精准匹配（SQL字符串相同）
+// 2. 语义等价（执行结果相同，忽略顺序）
+// 3. 错误分类
+func IsEquivalentSQL(dbPath, sql1, sql2 string) (bool, string) {
+	// 1. 检查是否精准匹配
 	if NormalizeSQL(sql1) == NormalizeSQL(sql2) {
-		return true, ""
+		return true, "精准匹配"
 	}
 
-	// 如果数据库路径为空，无法执行SQL进行比较
+	// 如果没有数据库路径，无法继续比较
 	if dbPath == "" {
 		return false, "未提供数据库路径"
 	}
 
-	// 使用数据库抽象层判断等价性
-	executor := database.NewDBExecutor()
-	isEquivalent, err := executor.IsEquivalentSQL(dbPath, sql1, sql2)
-	if err == nil {
-		return isEquivalent, ""
-	}
-
-	// 如果抽象层判断失败，回退到原有方式
+	// 2. 检查语义等价性
 	result1, err1 := eval.ExecSQL(dbPath, sql1)
 	result2, err2 := eval.ExecSQL(dbPath, sql2)
 
-	// 如果任一查询执行失败，则认为它们不等价
-	if err1 != nil || err2 != nil {
-		return false, fmt.Sprintf("SQL执行错误: %v, %v", err1, err2)
+	// 处理执行错误
+	if err1 != nil {
+		return false, fmt.Sprintf("预测SQL执行错误: %v", err1)
+	}
+	if err2 != nil {
+		return false, fmt.Sprintf("标准SQL执行错误: %v", err2)
+	}
+	if !result1.Success {
+		return false, fmt.Sprintf("预测SQL执行失败: %s", result1.Error)
+	}
+	if !result2.Success {
+		return false, fmt.Sprintf("标准SQL执行失败: %s", result2.Error)
 	}
 
-	if !result1.Success || !result2.Success {
-		return false, fmt.Sprintf("SQL执行不成功: %v, %v", result1.Error, result2.Error)
-	}
-
-	// 比较结果行数（不包括列名行）
+	// 检查行数是否相同
 	if len(result1.Rows) != len(result2.Rows) {
-		return false, fmt.Sprintf("结果行数不同: %d vs %d", len(result1.Rows), len(result2.Rows))
+		return false, fmt.Sprintf("行数不匹配: %d vs %d", len(result1.Rows), len(result2.Rows))
 	}
 
-	// 如果只有列名行，则认为结果为空，此时两个查询等价
-	if len(result1.Rows) == 1 {
-		return true, ""
+	// 如果结果为空（只有表头），视为等价
+	if len(result1.Rows) <= 1 {
+		return true, "等价（空结果集）"
 	}
 
-	// 比较结果内容（忽略列名）
-	for i := 1; i < len(result1.Rows); i++ {
-		if len(result1.Rows[i]) != len(result2.Rows[i]) {
-			return false, fmt.Sprintf("行 %d 的列数不同: %d vs %d", i, len(result1.Rows[i]), len(result2.Rows[i]))
+	// 检查是否需要忽略顺序
+	hasOrderBy := hasOrderByClause(sql2) // sql2是标准SQL
+
+	// 如果标准SQL中没有ORDER BY，则按集合比较（忽略顺序）
+	if !hasOrderBy {
+		// 对结果排序
+		sortedRows1 := sortResultRows(result1.Rows)
+		sortedRows2 := sortResultRows(result2.Rows)
+
+		// 比较排序后的结果
+		for i := 1; i < len(sortedRows1); i++ {
+			if len(sortedRows1[i]) != len(sortedRows2[i]) {
+				return false, fmt.Sprintf("列数不匹配: %d vs %d", len(sortedRows1[i]), len(sortedRows2[i]))
+			}
+
+			// 比较每个单元格的值
+			for j := 0; j < len(sortedRows1[i]); j++ {
+				val1 := strings.TrimSpace(sortedRows1[i][j])
+				val2 := strings.TrimSpace(sortedRows2[i][j])
+
+				// 如果字符串相等或数值相等，继续比较
+				if val1 == val2 {
+					continue
+				}
+
+				// 尝试数值比较
+				num1, err1 := strconv.ParseFloat(val1, 64)
+				num2, err2 := strconv.ParseFloat(val2, 64)
+				if err1 == nil && err2 == nil && math.Abs(num1-num2) < 1e-10 {
+					continue
+				}
+
+				return false, fmt.Sprintf("值不匹配: '%s' vs '%s'", val1, val2)
+			}
 		}
 
-		// 比较每一行的内容
+		return true, "语义等价（忽略顺序）"
+	}
+
+	// 如果有ORDER BY，则考虑顺序进行比较
+	for i := 1; i < len(result1.Rows); i++ {
+		if len(result1.Rows[i]) != len(result2.Rows[i]) {
+			return false, fmt.Sprintf("列数不匹配: %d vs %d", len(result1.Rows[i]), len(result2.Rows[i]))
+		}
+
 		for j := 0; j < len(result1.Rows[i]); j++ {
-			// 尝试将字符串转换为数字进行比较
 			val1 := strings.TrimSpace(result1.Rows[i][j])
 			val2 := strings.TrimSpace(result2.Rows[i][j])
 
-			// 如果两个值完全相同，则继续比较下一个值
 			if val1 == val2 {
 				continue
 			}
 
-			// 尝试将值转换为浮点数进行比较
-			float1, err1 := strconv.ParseFloat(val1, 64)
-			float2, err2 := strconv.ParseFloat(val2, 64)
-			if err1 == nil && err2 == nil {
-				// 如果两个浮点数相等（允许一定的误差），则继续比较下一个值
-				if math.Abs(float1-float2) < 1e-10 {
-					continue
-				}
+			// 尝试数值比较
+			num1, err1 := strconv.ParseFloat(val1, 64)
+			num2, err2 := strconv.ParseFloat(val2, 64)
+			if err1 == nil && err2 == nil && math.Abs(num1-num2) < 1e-10 {
+				continue
 			}
 
-			// 如果值不相等，则认为两个查询不等价
-			return false, fmt.Sprintf("行 %d 列 %d 的值不同: '%s' vs '%s'", i, j, val1, val2)
+			return false, fmt.Sprintf("值不匹配: '%s' vs '%s'", val1, val2)
 		}
 	}
 
-	// 所有检查都通过，认为两个SQL查询等价
-	return true, ""
+	return true, "语义等价（考虑顺序）"
 }
 
-// NormalizeSQL 标准化SQL语句，用于简单的文本比较
-func NormalizeSQL(sql string) string {
-	// 转换为小写
-	sql = strings.ToLower(sql)
+// AnalyzeSQL 分析SQL查询结果并返回结果类型和描述
+func AnalyzeSQL(dbPath, predSQL, gtSQL, errorReason string) AnalysisResult {
+	// 1. 检查精准匹配
+	if NormalizeSQL(predSQL) == NormalizeSQL(gtSQL) {
+		return AnalysisResult{Type: ExactMatch, Description: "精准匹配"}
+	}
 
-	// 移除分号
-	sql = strings.TrimSuffix(sql, ";")
+	// 已提供错误原因的情况
+	if errorReason != "" {
+		// 2. 判断标准答案是否有错误
+		if strings.Contains(errorReason, "标准SQL执行错误") || strings.Contains(errorReason, "标准SQL执行失败") {
+			return AnalysisResult{Type: GTError, Description: errorReason}
+		}
 
-	// 移除多余的空格
-	sql = strings.Join(strings.Fields(sql), " ")
+		// 3. 判断预测结果是否有执行错误
+		if strings.Contains(errorReason, "预测SQL执行错误") || strings.Contains(errorReason, "预测SQL执行失败") {
+			return AnalysisResult{Type: ExecError, Description: errorReason}
+		}
 
-	return sql
+		// 4. 判断行数错误
+		if strings.Contains(errorReason, "行数不匹配") {
+			return AnalysisResult{Type: RowError, Description: errorReason}
+		}
+
+		// 5. 判断列错误
+		if strings.Contains(errorReason, "列数不匹配") || strings.Contains(errorReason, "投影错误") {
+			return AnalysisResult{Type: ColumnError, Description: errorReason}
+		}
+	}
+
+	// 6. 检查语义等价性
+	if dbPath != "" {
+		isEquivalent, reason := IsEquivalentSQL(dbPath, predSQL, gtSQL)
+		if isEquivalent {
+			return AnalysisResult{Type: SemanticMatch, Description: reason}
+		}
+
+		// 根据不等价原因进行分类
+		if strings.Contains(reason, "标准SQL执行") {
+			return AnalysisResult{Type: GTError, Description: reason}
+		}
+		if strings.Contains(reason, "预测SQL执行") {
+			return AnalysisResult{Type: ExecError, Description: reason}
+		}
+		if strings.Contains(reason, "行数") {
+			return AnalysisResult{Type: RowError, Description: reason}
+		}
+		if strings.Contains(reason, "列数") || strings.Contains(reason, "投影") {
+			return AnalysisResult{Type: ColumnError, Description: reason}
+		}
+
+		// 默认为未知错误
+		return AnalysisResult{Type: UnknownError, Description: reason}
+	}
+
+	// 没有足够信息时返回未知错误
+	return AnalysisResult{Type: UnknownError, Description: "无法确定错误类型"}
 }
 
 // ClassifyErrorReason 将错误原因分类为标准类别
-// 参数:
-// - errorReason: 原始错误原因描述
-// 返回:
-// - string: 标准化的错误类别
 func ClassifyErrorReason(errorReason string) string {
-	// 错误分类原则：
-	// 1. 行错误拥有最高优先级 - 包括行数错误、执行错误、语法错误等
-	// 2. 列错误只有在行数一致的情况下才能被判定
+	if errorReason == "" {
+		return "未知的错误" // 默认错误类型
+	}
 
-	// --- 第一级优先级：行错误 ---
-
-	// 1. 空错误原因特殊处理 - 只有确定不存在行错误时才被判定为投影错误
-	// 不放在开头，因为要先排除是否是行错误
-
-	// 2. 语法错误检测（最高优先级）
-	if strings.Contains(errorReason, "SQL执行不成功") && 
-		(strings.Contains(errorReason, "near") || 
-		strings.Contains(errorReason, "syntax error")) {
+	// 判断是否是参考答案执行错误
+	if strings.Contains(errorReason, "标准SQL执行错误") || strings.Contains(errorReason, "标准SQL执行失败") {
 		return "参考答案有语法错误"
 	}
 
-	// 3. 执行错误检测 - 增强检测能力
-	if strings.Contains(errorReason, "SQL执行错误") || 
-		strings.Contains(errorReason, "SQL执行失败") || 
-		strings.Contains(errorReason, "execution error") ||
-		strings.Contains(errorReason, "database") && strings.Contains(errorReason, "does not exist") ||
-		strings.Contains(errorReason, "loan_user") && strings.Contains(errorReason, "does not exist") ||
-		strings.Contains(errorReason, "数据库不存在") {
+	// 判断是否是执行错误
+	if strings.Contains(errorReason, "预测SQL执行错误") || strings.Contains(errorReason, "预测SQL执行失败") ||
+		strings.Contains(errorReason, "语法错误") {
 		return "执行错误"
 	}
 
-	// 4. 行数错误检测
-	rowDiffRegex := regexp.MustCompile("结果行数不同: (\\d+) vs (\\d+)")
-	if rowDiffRegex.MatchString(errorReason) || strings.Contains(errorReason, "行数不同") {
+	// 判断是否是行错误
+	if strings.Contains(errorReason, "行数") {
 		return "行数错误"
 	}
 
-	// --- 第二级优先级：列错误（只有行数一致才有意义）---
-
-	// 5. 列数错误检测
-	colDiffRegex := regexp.MustCompile("列数不同: (\\d+) vs (\\d+)")
-	if colDiffRegex.MatchString(errorReason) {
-		return "列数错误"
-	}
-	if regexp.MustCompile("column.*(count|number).*different.*?(\\d+).*?(\\d+)").MatchString(errorReason) {
-		return "列数错误"
-	}
-
-	// 6. 列值错误检测
-	rowColValueRegex := regexp.MustCompile("行 (\\d+) 列 (\\d+) 的值不同")
-	if rowColValueRegex.MatchString(errorReason) {
-		matches := rowColValueRegex.FindStringSubmatch(errorReason)
-		row := matches[1]
-
-		// 如果是第1行的值不同，可能是列选择错误
-		if row == "1" {
-			return "列选择错误"
-		} else {
-			return "行值错误"
-		}
-	}
-
-	// 7. 最后处理空错误原因，更可能是投影错误
-	// 只有在确定不存在行错误的情况下才这样判定
-	if errorReason == "" || errorReason == "未知原因" {
+	// 判断是否是列错误
+	if strings.Contains(errorReason, "列数") || strings.Contains(errorReason, "列名") ||
+		strings.Contains(errorReason, "投影") {
 		return "投影错误"
 	}
 
-	// 8. 其他类型错误检测（使用正则表达式匹配其他常见错误模式）
-	syntaxErrorRegex := regexp.MustCompile(`(?i)(syntax|parse|token|valid|expect|illegal).*error`)
-	columnErrorRegex := regexp.MustCompile(`(?i)(column|field|attribute).*(not|unknown|missing|invalid)`)
-	tableErrorRegex := regexp.MustCompile(`(?i)(table|relation).*(not|unknown|missing|invalid)`)
-	joinErrorRegex := regexp.MustCompile(`(?i)(join|foreign key|relation|reference)`)
-	groupByErrorRegex := regexp.MustCompile(`(?i)(group by|aggregate|having)`)
-	orderByErrorRegex := regexp.MustCompile(`(?i)(order by|sort)`)
-	limitErrorRegex := regexp.MustCompile(`(?i)(limit|offset)`)
-	subqueryErrorRegex := regexp.MustCompile(`(?i)(subquery|sub-query|nested)`)
-	typeErrorRegex := regexp.MustCompile(`(?i)(type|conversion|cast|datatype)`)
-
-	// 匹配其他常见的错误类型
-	switch {
-	case syntaxErrorRegex.MatchString(errorReason):
-		return "语法错误"
-	case columnErrorRegex.MatchString(errorReason):
-		return "列/字段错误"
-	case tableErrorRegex.MatchString(errorReason):
-		return "表/关系错误"
-	case joinErrorRegex.MatchString(errorReason):
-		return "连接错误"
-	case groupByErrorRegex.MatchString(errorReason):
-		return "分组错误"
-	case orderByErrorRegex.MatchString(errorReason):
-		return "排序错误"
-	case limitErrorRegex.MatchString(errorReason):
-		return "限制错误"
-	case subqueryErrorRegex.MatchString(errorReason):
-		return "子查询错误"
-	case typeErrorRegex.MatchString(errorReason):
-		return "类型错误"
-	case strings.Contains(errorReason, "execution") || strings.Contains(errorReason, "执行"):
-		return "执行错误"
-	case strings.Contains(errorReason, "result") || strings.Contains(errorReason, "结果"):
-		return "结果不匹配"
-	default:
-		// 检查是否有行列值比较的错误，但没有标准形式
-		if strings.Contains(errorReason, "行") && strings.Contains(errorReason, "列") && strings.Contains(errorReason, "值不同") {
-			return "值不匹配错误"
-		}
-
-		// 如果不是已知类型，存储原始错误消息（截取前50个字符）
-		if len(errorReason) > 50 {
-			return errorReason[:50] + "..."
-		}
-		return errorReason
-	}
+	// 其他错误情况
+	return "其他错误"
 }
 
-// IsColumnError 判断错误原因是否属于列错误
+// 判断SQL是否包含ORDER BY子句
+func hasOrderByClause(sql string) bool {
+	// 简单实现，不考虑字符串内容和注释中的"order by"
+	return regexp.MustCompile(`(?i)\border\s+by\b`).MatchString(sql)
+}
+
+// 结果集行转换为字符串
+func resultRowToString(row []string) string {
+	return strings.Join(row, "\t")
+}
+
+// 对结果集进行排序（忽略表头行）
+func sortResultRows(rows [][]string) [][]string {
+	if len(rows) <= 1 {
+		return rows
+	}
+
+	// 创建结果的深拷贝
+	result := make([][]string, len(rows))
+	for i, row := range rows {
+		result[i] = make([]string, len(row))
+		copy(result[i], row)
+	}
+
+	// 保留表头
+	header := result[0]
+
+	// 将数据行转换为可排序的格式
+	type sortableRow struct {
+		key      string   // 用于排序的键
+		original []string // 原始行数据
+	}
+
+	// 提取数据行
+	dataRows := make([]sortableRow, len(result)-1)
+	for i := 1; i < len(result); i++ {
+		dataRows[i-1] = sortableRow{
+			key:      resultRowToString(result[i]),
+			original: result[i],
+		}
+	}
+
+	// 排序
+	sort.Slice(dataRows, func(i, j int) bool {
+		return dataRows[i].key < dataRows[j].key
+	})
+
+	// 重构结果
+	sorted := make([][]string, len(rows))
+	sorted[0] = header
+	for i := 0; i < len(dataRows); i++ {
+		sorted[i+1] = dataRows[i].original
+	}
+
+	return sorted
+}
+
+// IsColumnError 判断错误类型是否为列错误(兼容旧代码)
 func IsColumnError(reason string) bool {
-	// 标准答案本身就存在语法错误的情况，应当判定为行错误
-	if reason == "参考答案有语法错误" {
-		return false
-	}
-
-	// 没有错误原因的情况，这通常是投影列不匹配
-	if reason == "未知原因" || reason == "" || reason == "投影错误" {
-		// 判断为列错误（投影错误）
-		return true
-	}
-
-	// 列数错误
-	if strings.Contains(reason, "列数错误") {
-		return true
-	}
-
-	// 列选择错误
-	if strings.Contains(reason, "列选择错误") {
-		return true
-	}
-
-	// 类型错误通常与列有关
-	if strings.Contains(reason, "类型错误") {
-		return true
-	}
-
-	// 列/字段错误
-	if strings.Contains(reason, "列/字段错误") {
-		return true
-	}
-
-	// 投影错误 - 不同SELECT字段
-	if strings.Contains(reason, "不同>") || strings.Contains(reason, "字段不匹配") {
-		return true
-	}
-
-	// 默认其他错误都算作行错误
-	return false
+	// 根据错误原因的文本判断是否是列错误
+	return strings.Contains(reason, "列数") ||
+		strings.Contains(reason, "列名") ||
+		strings.Contains(reason, "投影") ||
+		strings.Contains(reason, "类型") ||
+		reason == "投影错误"
 }
 
-// TruncateString 截断过长的字符串并添加省略号
+// TruncateString 截断字符串到指定长度并添加省略号
 func TruncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
@@ -277,48 +335,45 @@ func TruncateString(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-// AnalyzeErrorDistribution 分析错误分布并返回统计结果
-// 参数:
-// - results: SQL结果列表
-// 返回:
-// - map[string]int: 每种错误类型的计数
-// - int: 列错误总数
-// - int: 行错误总数
-// - map[string]interface{}: 每种错误类型的示例
+// AnalyzeErrorDistribution 分析错误分布
 func AnalyzeErrorDistribution(results []interface{}) (map[string]int, int, int, map[string]interface{}) {
-	detailedErrorReasons := make(map[string]int)
-	reasonToExample := make(map[string]interface{})
+	errorReasons := make(map[string]int)
+	examplesByReason := make(map[string]interface{})
 	columnErrors := 0
 	rowErrors := 0
 
-	// 遍历结果，收集错误统计信息
 	for _, resultObj := range results {
 		result, ok := resultObj.(map[string]interface{})
 		if !ok {
 			continue
 		}
 
-		// 检查是否是不正确的结果
+		// 跳过正确和模糊查询
 		isCorrect, _ := result["is_correct"].(bool)
 		pred, _ := result["pred"].(string)
-		if !isCorrect && pred != "AMBIGUOUS_QUERY" {
-			errorReason, _ := result["error_reason"].(string)
-			reason := ClassifyErrorReason(errorReason)
-			detailedErrorReasons[reason]++
+		if isCorrect || pred == "AMBIGUOUS_QUERY" {
+			continue
+		}
 
-			// 保存该错误类型的示例（如果尚未有）
-			if _, exists := reasonToExample[reason]; !exists {
-				reasonToExample[reason] = result
-			}
+		// 获取错误原因
+		errorReason, _ := result["error_reason"].(string)
+		standardReason := ClassifyErrorReason(errorReason)
 
-			// 判断是列错误还是行错误
-			if IsColumnError(reason) {
-				columnErrors++
-			} else {
-				rowErrors++
-			}
+		// 统计错误类型
+		errorReasons[standardReason]++
+
+		// 保存示例（如果还没有）
+		if _, exists := examplesByReason[standardReason]; !exists {
+			examplesByReason[standardReason] = result
+		}
+
+		// 判断错误类别
+		if standardReason == "投影错误" {
+			columnErrors++
+		} else {
+			rowErrors++
 		}
 	}
 
-	return detailedErrorReasons, columnErrors, rowErrors, reasonToExample
+	return errorReasons, columnErrors, rowErrors, examplesByReason
 }
