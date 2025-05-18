@@ -39,17 +39,19 @@ func generateSQL(client llm.LLM, options llm.Options, ds *dataset.Dataset, examp
 			Question:  question,
 			GTSQL:     gtSQL,
 			PredSQL:   "AMBIGUOUS_QUERY", // 特殊标记
-			Thinking:  "模糊查询需要澄清",
-			Ambiguous: "模糊查询需要澄清",
+			Thinking:  "",
+			Ambiguous: "True",
 		}
 	}
 
 	// 如果不是模糊查询，继续正常处理
 	result := SQLResult{
-		ID:       id,
-		DBName:   dbID,
-		Question: question,
-		GTSQL:    gtSQL,
+		ID:        id,
+		DBName:    dbID,
+		Question:  question,
+		GTSQL:     gtSQL,
+		Ambiguous: "False",
+		Thinking:  "",
 	}
 
 	// 加载数据库Schema

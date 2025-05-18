@@ -185,9 +185,9 @@ func main() {
 
 		// 生成SQL
 		result := generateSQL(client, options, currentDataset, example)
-		
+
 		// 检查是否为模糊查询
-		if result.Ambiguous != "" {
+		if result.Ambiguous == "True" {
 			ambiguousQueriesCount++
 		}
 
