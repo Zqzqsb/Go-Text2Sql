@@ -24,12 +24,12 @@ func NewGeminiClient(cfg *config.GeminiConfig, modelName string) *GeminiClient {
 	if modelName == "" {
 		modelName = "gemini-pro"
 	}
-	
+
 	baseURL := "https://generativelanguage.googleapis.com/v1beta"
 	if cfg.BaseURL != "" {
 		baseURL = cfg.BaseURL
 	}
-	
+
 	return &GeminiClient{
 		apiKey:    cfg.APIKey,
 		baseURL:   baseURL,
@@ -51,7 +51,7 @@ type geminiContent struct {
 
 // geminiGenerateContentRequest 表示Gemini生成内容请求
 type geminiGenerateContentRequest struct {
-	Contents   []geminiContent `json:"contents"`
+	Contents   []geminiContent  `json:"contents"`
 	Generation geminiGeneration `json:"generationConfig"`
 }
 
@@ -89,33 +89,20 @@ func (c *GeminiClient) ModelName() string {
 func (c *GeminiClient) GenerateSQL(prompt string, options Options) (*SQLResponse, error) {
 	// 构建系统消息
 	systemMessage := options.SystemPrompt
-	if systemMessage == "" {
-		if options.DisableThinking {
-			systemMessage = "请直接回答问题，只输出SQL语句，不要给出任何思考过程或解释。SQL语句应以分号结尾，并且不要包含任何其他文本或代码块标记。"
-		} else {
-			systemMessage = "请详细解释你的思考过程，然后给出最终的SQL查询。确保最终的SQL查询是单独一行，以分号结尾。"
-		}
-	}
-	
-	// 添加保留中文词汇的指令
-	if options.PreserveChineseTerms {
-		systemMessage += " 重要：不要翻译或转换任何中文词汇（如地名、国家名等）为英文，保持原始中文词汇不变。特别是在WHERE条件中的值，必须保持原始中文。例如，WHERE Country = '法国' 不应转换为 WHERE Country = 'France'。"
-	} else {
-		systemMessage += " 重要：将所有中文地名、国家名和人名翻译为英文，并确保它们以大写字母开头。例如，WHERE Country = '法国' 应转换为 WHERE Country = 'France'。"
-	}
-	
+	systemMessage += "你是一个SQL专家，精通标准SQL语法和各种数据库查询优化技术。请根据提供的数据库结构和问题，编写准确、高效、符合标准的SQL查询语句。"
+
 	// 构建完整提示
 	fullPrompt := fmt.Sprintf("%s\n\n%s", systemMessage, prompt)
-	
+
 	// 调用生成方法获取响应
 	content, err := c.generateContent(fullPrompt, options)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// 处理思考过程和SQL
 	var sqlResponse SQLResponse
-	
+
 	if !options.DisableThinking {
 		// 如果启用了思考过程，尝试分离思考过程和SQL
 		parts := extractSQLFromThinking(content.Content)
@@ -132,7 +119,7 @@ func (c *GeminiClient) GenerateSQL(prompt string, options Options) (*SQLResponse
 
 	// 处理SQL格式
 	sqlResponse.Response = processSQLFormat(sqlResponse.Response)
-	
+
 	// 设置token使用情况
 	sqlResponse.PromptTokens = content.PromptTokens
 	sqlResponse.ResponseTokens = content.ResponseTokens
@@ -148,12 +135,12 @@ func (c *GeminiClient) GenerateText(prompt string, options Options) (string, err
 	if options.SystemPrompt != "" {
 		fullPrompt = fmt.Sprintf("%s\n\n%s", options.SystemPrompt, prompt)
 	}
-	
+
 	content, err := c.generateContent(fullPrompt, options)
 	if err != nil {
 		return "", err
 	}
-	
+
 	return content.Content, nil
 }
 
@@ -161,7 +148,7 @@ func (c *GeminiClient) GenerateText(prompt string, options Options) (string, err
 func (c *GeminiClient) Chat(messages []Message, options Options) (string, error) {
 	// 将标准消息格式转换为Gemini格式
 	var geminiMessages []geminiContent
-	
+
 	for _, msg := range messages {
 		role := msg.Role
 		// Gemini只支持user和model角色，将system角色转换为user
@@ -170,7 +157,7 @@ func (c *GeminiClient) Chat(messages []Message, options Options) (string, error)
 		} else if role == "assistant" {
 			role = "model"
 		}
-		
+
 		geminiMessages = append(geminiMessages, geminiContent{
 			Role: role,
 			Parts: []geminiPart{
@@ -178,22 +165,22 @@ func (c *GeminiClient) Chat(messages []Message, options Options) (string, error)
 			},
 		})
 	}
-	
+
 	// 发送请求
 	response, err := c.sendChatRequest(geminiMessages, options)
 	if err != nil {
 		return "", err
 	}
-	
+
 	return response.Content, nil
 }
 
 // geminiResponse 表示Gemini响应
 type geminiResponse struct {
-	Content       string
-	PromptTokens  int
+	Content        string
+	PromptTokens   int
 	ResponseTokens int
-	TotalTokens   int
+	TotalTokens    int
 }
 
 // generateContent 生成内容
@@ -205,7 +192,7 @@ func (c *GeminiClient) generateContent(prompt string, options Options) (*geminiR
 			},
 		},
 	}
-	
+
 	return c.sendChatRequest(contents, options)
 }
 
@@ -225,7 +212,7 @@ func (c *GeminiClient) sendChatRequest(contents []geminiContent, options Options
 	}
 
 	// 构建Gemini API URL
-	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s", 
+	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s",
 		c.baseURL, c.modelName, c.apiKey)
 
 	// 创建HTTP请求
@@ -267,9 +254,9 @@ func (c *GeminiClient) sendChatRequest(contents []geminiContent, options Options
 
 	// 返回响应内容
 	return &geminiResponse{
-		Content:       genResp.Candidates[0].Content.Parts[0].Text,
-		PromptTokens:  genResp.Usage.PromptTokenCount,
+		Content:        genResp.Candidates[0].Content.Parts[0].Text,
+		PromptTokens:   genResp.Usage.PromptTokenCount,
 		ResponseTokens: genResp.Usage.CandidatesTokenCount,
-		TotalTokens:   genResp.Usage.TotalTokenCount,
+		TotalTokens:    genResp.Usage.TotalTokenCount,
 	}, nil
 }

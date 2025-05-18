@@ -79,27 +79,9 @@ func (c *OpenAIClient) ModelName() string {
 // GenerateSQL 生成SQL查询
 func (c *OpenAIClient) GenerateSQL(prompt string, options Options) (*SQLResponse, error) {
 	// 根据模型配置决定是否启用思考过程
-	disableThinking := options.DisableThinking
-	if !c.modelConfig.CanThink {
-		disableThinking = true
-	}
-
-	// 构建系统消息
 	systemMessage := options.SystemPrompt
-	if systemMessage == "" {
-		if disableThinking {
-			systemMessage = "请直接回答问题，只输出SQL语句，不要给出任何思考过程或解释。SQL语句应以分号结尾，并且不要包含任何其他文本或代码块标记。"
-		} else {
-			systemMessage = ""
-		}
-	}
-
-	// 添加保留中文词汇的指令
-	if options.PreserveChineseTerms {
-		systemMessage += " 重要：不要翻译或转换任何中文词汇（如地名、国家名等）为英文，保持原始中文词汇不变。特别是在WHERE条件中的值，必须保持原始中文。例如，WHERE Country = '法国' 不应转换为 WHERE Country = 'France'。"
-	} else {
-		systemMessage += " 重要：将所有中文地名、国家名和人名翻译为英文，并确保它们以大写字母开头。例如，WHERE Country = '法国' 应转换为 WHERE Country = 'France'。"
-	}
+	disableThinking := options.DisableThinking
+	systemMessage += "你是一个SQL专家，精通标准SQL语法和各种数据库查询优化技术。请根据提供的数据库结构和问题，编写准确、高效、符合标准的SQL查询语句。"
 
 	// 构建请求
 	messages := []Message{

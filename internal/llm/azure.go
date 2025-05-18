@@ -26,7 +26,7 @@ func NewAzureClient(cfg *config.AzureConfig, modelName string) *AzureClient {
 	if modelName == "" {
 		modelName = cfg.DeploymentID
 	}
-	
+
 	return &AzureClient{
 		apiKey:       cfg.APIKey,
 		endpoint:     cfg.Endpoint,
@@ -79,21 +79,7 @@ func (c *AzureClient) ModelName() string {
 func (c *AzureClient) GenerateSQL(prompt string, options Options) (*SQLResponse, error) {
 	// 构建系统消息
 	systemMessage := options.SystemPrompt
-	if systemMessage == "" {
-		if options.DisableThinking {
-			systemMessage = "请直接回答问题，只输出SQL语句，不要给出任何思考过程或解释。SQL语句应以分号结尾，并且不要包含任何其他文本或代码块标记。"
-		} else {
-			systemMessage = "请详细解释你的思考过程，然后给出最终的SQL查询。确保最终的SQL查询是单独一行，以分号结尾。"
-		}
-	}
-	
-	// 添加保留中文词汇的指令
-	if options.PreserveChineseTerms {
-		systemMessage += " 重要：不要翻译或转换任何中文词汇（如地名、国家名等）为英文，保持原始中文词汇不变。特别是在WHERE条件中的值，必须保持原始中文。例如，WHERE Country = '法国' 不应转换为 WHERE Country = 'France'。"
-	} else {
-		systemMessage += " 重要：将所有中文地名、国家名和人名翻译为英文，并确保它们以大写字母开头。例如，WHERE Country = '法国' 应转换为 WHERE Country = 'France'。"
-	}
-
+	systemMessage += "你是一个SQL专家，精通标准SQL语法和各种数据库查询优化技术。请根据提供的数据库结构和问题，编写准确、高效、符合标准的SQL查询语句。"
 	// 构建请求
 	messages := []Message{
 		{Role: "system", Content: systemMessage},
@@ -105,10 +91,10 @@ func (c *AzureClient) GenerateSQL(prompt string, options Options) (*SQLResponse,
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// 处理思考过程和SQL
 	var sqlResponse SQLResponse
-	
+
 	if !options.DisableThinking {
 		// 如果启用了思考过程，尝试分离思考过程和SQL
 		parts := extractSQLFromThinking(content.Content)
@@ -125,7 +111,7 @@ func (c *AzureClient) GenerateSQL(prompt string, options Options) (*SQLResponse,
 
 	// 处理SQL格式
 	sqlResponse.Response = processSQLFormat(sqlResponse.Response)
-	
+
 	// 设置token使用情况
 	sqlResponse.PromptTokens = content.PromptTokens
 	sqlResponse.ResponseTokens = content.ResponseTokens
@@ -139,16 +125,16 @@ func (c *AzureClient) GenerateText(prompt string, options Options) (string, erro
 	messages := []Message{
 		{Role: "user", Content: prompt},
 	}
-	
+
 	if options.SystemPrompt != "" {
 		messages = append([]Message{{Role: "system", Content: options.SystemPrompt}}, messages...)
 	}
-	
+
 	content, err := c.sendChatRequest(messages, options)
 	if err != nil {
 		return "", err
 	}
-	
+
 	return content.Content, nil
 }
 
@@ -158,16 +144,16 @@ func (c *AzureClient) Chat(messages []Message, options Options) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	
+
 	return content.Content, nil
 }
 
 // chatResponse 表示聊天响应
 type azureChatResponse struct {
-	Content       string
-	PromptTokens  int
+	Content        string
+	PromptTokens   int
 	ResponseTokens int
-	TotalTokens   int
+	TotalTokens    int
 }
 
 // sendChatRequest 发送聊天请求
@@ -184,7 +170,7 @@ func (c *AzureClient) sendChatRequest(messages []Message, options Options) (*azu
 	}
 
 	// 构建Azure OpenAI API URL
-	url := fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s", 
+	url := fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s",
 		c.endpoint, c.deploymentID, c.apiVersion)
 
 	// 创建HTTP请求
@@ -227,9 +213,9 @@ func (c *AzureClient) sendChatRequest(messages []Message, options Options) (*azu
 
 	// 返回响应内容
 	return &azureChatResponse{
-		Content:       completionResp.Choices[0].Message.Content,
-		PromptTokens:  completionResp.Usage.PromptTokens,
+		Content:        completionResp.Choices[0].Message.Content,
+		PromptTokens:   completionResp.Usage.PromptTokens,
 		ResponseTokens: completionResp.Usage.CompletionTokens,
-		TotalTokens:   completionResp.Usage.TotalTokens,
+		TotalTokens:    completionResp.Usage.TotalTokens,
 	}, nil
 }
