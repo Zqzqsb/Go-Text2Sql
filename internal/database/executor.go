@@ -40,7 +40,7 @@ func (e *DBExecutor) ExecSQL(dbPath string, sqlQuery string) ([]map[string]inter
 	// 连接数据库
 	db, err := adapter.Connect(config)
 	if err != nil {
-		return nil, fmt.Errorf("数据库连接失败: %w", err)
+	return nil, fmt.Errorf("数据库连接失败: %w", err)
 	}
 	defer db.Close()
 	
