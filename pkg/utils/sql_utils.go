@@ -90,16 +90,6 @@ func FormatPromptWithFields(question string, schema string, fieldsInfo string, u
 		}
 	}
 
-	// 	// 添加其余提示内容
-	// 	prompt += `
-
-	// 不要给出冗余的信息，例如对于问题:找出比赛数量最多的一年。合理的回答是:
-	// - SELECT YEAR FROM matches GROUP BY YEAR ORDER BY count(*) DESC LIMIT 1;
-	// 而不是:
-	// SELECT year, COUNT(*) AS match_count FROM matches GROUP BY year ORDER BY match_count DESC LIMIT 1;
-	// 这里的核心要点是，问题中只需要"最多的一年"，而不不需要其他字段。`
-
-	// 如果提供了字段信息，添加额外的提示
 	if fieldsInfo != "" {
 		if useDescription {
 			prompt += `
@@ -114,17 +104,7 @@ func FormatPromptWithFields(question string, schema string, fieldsInfo string, u
 
 	prompt += `
 
-请你在请先在 <think> 和 </think> 标签之间提供详细的思考过程，首先要思考的问题需要的字段数量(问到几个便是需要几个，不要肢意添加),然后给出最终的SQL查询语句。
-对于任何问题，都需要进行思考禁止使用缓存。
-
-sql在保证正确性的情况下尽可能简单可读，确保最终的SQL查询是单独一行，以分号结尾。注意,请不要给出多个sql，答案仅仅需要最可能是正确的一个sql查询。
-
-例如:
-<think>
-这里是思考过程...
-</think>
-
-SELECT * FROM table WHERE condition;`
+sql在保证正确性的情况下尽可能简单可读，确保最终的SQL查询是单独一行，以分号结尾。注意,请不要给出多个sql，答案仅仅需要最可能是正确的一个sql查询。`
 
 	return prompt
 }
