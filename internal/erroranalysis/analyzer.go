@@ -79,17 +79,17 @@ func IsEquivalentSQL(dbPath, sql1, sql2 string) (bool, string) {
 	result2, err2 := eval.ExecSQL(dbPath, sql2)
 
 	// 处理执行错误
-	if err1 != nil {
-		return false, fmt.Sprintf("预测SQL执行错误: %v", err1)
-	}
 	if err2 != nil {
 		return false, fmt.Sprintf("标准SQL执行错误: %v", err2)
 	}
-	if !result1.Success {
-		return false, fmt.Sprintf("预测SQL执行失败: %s", result1.Error)
-	}
 	if !result2.Success {
 		return false, fmt.Sprintf("标准SQL执行失败: %s", result2.Error)
+	}
+	if err1 != nil {
+		return false, fmt.Sprintf("预测SQL执行错误: %v", err1)
+	}
+	if !result1.Success {
+		return false, fmt.Sprintf("预测SQL执行失败: %s", result1.Error)
 	}
 
 	// 检查行数是否相同
