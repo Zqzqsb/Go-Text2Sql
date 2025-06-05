@@ -228,14 +228,14 @@ func (a *SQLAnalyzer) classifyError(errorReason string) string {
 	}
 
 	// 优先级 4：行数错误 (Row Count Error)
-	// 当错误原因包含与执行结果“行数”不符相关的提示。
+	// 当错误原因包含与执行结果"行数"不符相关的提示。
 	if strings.Contains(strings.ToLower(errorReason), "行数不匹配") ||
 		strings.Contains(strings.ToLower(errorReason), "数据行数") {
 		return "行数错误"
 	}
 
 	// 优先级 5：投影错误 (Projection Error)
-	// 当错误原因包含与执行结果的“列数”、“列名”不符，或者与查询的“投影”（即选择和组织列的方式）相关的提示。
+	// 当错误原因包含与执行结果的"列数"、"列名"不符，或者与查询的"投影"（即选择和组织列的方式）相关的提示。
 	if strings.Contains(strings.ToLower(errorReason), "列数不匹配") ||
 		strings.Contains(strings.ToLower(errorReason), "列名不匹配") ||
 		strings.Contains(strings.ToLower(errorReason), "列名数量") {
@@ -244,9 +244,10 @@ func (a *SQLAnalyzer) classifyError(errorReason string) string {
 
 	// 结果对比阶段的差异（优先级低于上述错误）
 
-	// 数据不一致错误
+	// 数据不一致错误 - 更新匹配模式
 	if strings.Contains(strings.ToLower(errorReason), "数据不匹配") ||
-		strings.Contains(strings.ToLower(errorReason), "数据不一致") {
+		strings.Contains(strings.ToLower(errorReason), "数据不一致") ||
+		strings.Contains(strings.ToLower(errorReason), "值不匹配") {
 		return "数据不一致错误"
 	}
 
@@ -406,72 +407,59 @@ func (a *SQLAnalyzer) areResultsEquivalent(result1, result2 *ExecResult) (bool, 
 	}
 
 	// 第四步：对结果集进行转换，使其可比较（不考虑列顺序）
-	// 对于每一行，创建一个按列名排序的值数组
+	// 获取所有列名的统一顺序（按字母序排序）
+	sortedColumns := make([]string, 0, len(headerToIndex1))
+	for header := range headerToIndex1 {
+		sortedColumns = append(sortedColumns, header)
+	}
+	sort.Strings(sortedColumns)
 
 	// 转换结果集到可比较的格式
-	convertedRows1 := make([]map[string]string, dataRows1)
-	convertedRows2 := make([]map[string]string, dataRows2)
+	convertedRows1 := make([][]string, dataRows1)
+	convertedRows2 := make([][]string, dataRows2)
 
-	// 将标准SQL结果转化为按列名索引的数据
+	// 将标准SQL结果转化为统一列顺序的数据
 	for i := 1; i <= dataRows1; i++ {
-		rowMap := make(map[string]string)
-		for headerName, headerIndex := range headerToIndex1 {
-			if headerIndex < len(result1.Rows[i]) { // 防止索引越界
-				rowMap[headerName] = result1.Rows[i][headerIndex]
+		row := make([]string, len(sortedColumns))
+		for j, colName := range sortedColumns {
+			colIndex := headerToIndex1[colName]
+			if colIndex < len(result1.Rows[i]) { // 防止索引越界
+				row[j] = result1.Rows[i][colIndex]
+			} else {
+				row[j] = ""
 			}
 		}
-		convertedRows1[i-1] = rowMap
+		convertedRows1[i-1] = row
 	}
 
-	// 将预测SQL结果转化为按列名索引的数据
+	// 将预测SQL结果转化为统一列顺序的数据
 	for i := 1; i <= dataRows2; i++ {
-		rowMap := make(map[string]string)
-		for headerName, headerIndex := range headerToIndex2 {
-			if headerIndex < len(result2.Rows[i]) { // 防止索引越界
-				rowMap[headerName] = result2.Rows[i][headerIndex]
+		row := make([]string, len(sortedColumns))
+		for j, colName := range sortedColumns {
+			colIndex := headerToIndex2[colName]
+			if colIndex < len(result2.Rows[i]) { // 防止索引越界
+				row[j] = result2.Rows[i][colIndex]
+			} else {
+				row[j] = ""
 			}
 		}
-		convertedRows2[i-1] = rowMap
+		convertedRows2[i-1] = row
 	}
 
 	// 第五步：比较数据内容（考虑行的顺序无关性）
-	// 首先将每一行转换为一个唯一的字符串表示
+	// 将每一行转换为一个唯一的字符串表示
 	rowStrings1 := make(map[string]bool)
 	rowStrings2 := make(map[string]bool)
 
 	for _, row := range convertedRows1 {
-		// 按列名字典序排序列名
-		sortedColumns := make([]string, 0, len(row))
-		for colName := range row {
-			sortedColumns = append(sortedColumns, colName)
-		}
-		sort.Strings(sortedColumns)
-
-		// 按排序后的列名创建行字符串
-		values := make([]string, 0, len(sortedColumns))
-		for _, colName := range sortedColumns {
-			values = append(values, fmt.Sprintf("%s=%s", colName, row[colName]))
-		}
-
-		// 使用空格连接列值
-		rowStr := strings.Join(values, "|")
+		// 创建行字符串表示
+		rowStr := strings.Join(row, "|")
 		rowStrings1[rowStr] = true
 	}
 
 	for _, row := range convertedRows2 {
-		// 使用相同的方法处理预测SQL结果
-		sortedColumns := make([]string, 0, len(row))
-		for colName := range row {
-			sortedColumns = append(sortedColumns, colName)
-		}
-		sort.Strings(sortedColumns)
-
-		values := make([]string, 0, len(sortedColumns))
-		for _, colName := range sortedColumns {
-			values = append(values, fmt.Sprintf("%s=%s", colName, row[colName]))
-		}
-
-		rowStr := strings.Join(values, "|")
+		// 创建行字符串表示
+		rowStr := strings.Join(row, "|")
 		rowStrings2[rowStr] = true
 	}
 
@@ -483,7 +471,7 @@ func (a *SQLAnalyzer) areResultsEquivalent(result1, result2 *ExecResult) (bool, 
 	// 检查每一行是否存在于另一个结果集中
 	for rowStr := range rowStrings1 {
 		if !rowStrings2[rowStr] {
-			return false, "数据不一致错误"
+			return false, "数据不一致"
 		}
 	}
 

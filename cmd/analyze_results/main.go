@@ -59,19 +59,30 @@ func main() {
 	// 创建SQL分析器
 	analyzer := NewSQLAnalyzer()
 
-	// 创建报告生成器
+	// 创建报告生成器，传入输入路径用于分类输出
 	reporter := NewReporter(*outputDir)
 
-	// 加载输入结果
-	var inputResults []InputResult
-	var err error
-
-	// 检查输入路径是文件还是目录
+	// 确定分类输出目录
+	var classifiedOutputDir string
 	fileInfo, err := os.Stat(*inputPath)
 	if err != nil {
 		fmt.Printf("获取输入路径信息失败: %v\n", err)
 		os.Exit(1)
 	}
+
+	if fileInfo.IsDir() {
+		// 如果输入是目录，在该目录下创建分类输出
+		classifiedOutputDir = *inputPath
+	} else {
+		// 如果输入是文件，在文件所在目录创建分类输出
+		classifiedOutputDir = filepath.Dir(*inputPath)
+	}
+
+	// 创建分类输出管理器
+	classifier := NewResultClassifier(classifiedOutputDir)
+
+	// 加载输入结果
+	var inputResults []InputResult
 
 	// 根据输入路径类型加载结果
 	if fileInfo.IsDir() {
@@ -112,6 +123,9 @@ func main() {
 	fmt.Printf("成功加载 %d 个结果\n", len(inputResults))
 
 	startTime := time.Now()
+
+	// 存储分析结果用于分类输出
+	var analysisResults []*AnalysisResult
 
 	// 处理每个输入结果
 	for i, input := range inputResults {
@@ -163,9 +177,10 @@ func main() {
 		}
 
 		// 分析结果
-		analyzer.AnalyzeSQL(input, gtResult, predResult, gtErr, predErr)
+		analysisResult := analyzer.AnalyzeSQL(input, gtResult, predResult, gtErr, predErr)
 
-		// 不保存单个分析结果，只生成总结性报告
+		// 添加到分析结果列表
+		analysisResults = append(analysisResults, analysisResult)
 	}
 
 	// 计算分析时间
@@ -177,6 +192,14 @@ func main() {
 	// 生成汇总报告
 	if err := reporter.GenerateSummaryReport(stats, len(inputResults)); err != nil {
 		fmt.Printf("生成汇总报告失败: %v\n", err)
+	}
+
+	// 分类输出详细结果
+	fmt.Printf("\n开始分类输出分析结果...\n")
+	if err := classifier.ClassifyAndSaveResults(analysisResults); err != nil {
+		fmt.Printf("分类输出结果失败: %v\n", err)
+	} else {
+		fmt.Printf("分类输出完成，结果保存在: %s\n", classifiedOutputDir)
 	}
 
 	// 打印摘要
