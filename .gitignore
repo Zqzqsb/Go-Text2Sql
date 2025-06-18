@@ -47,4 +47,11 @@ config_*
 **/sql_results/
 **/incorrect_queries/
 **/ambiguous_queries/
-
+**/correct_exact_match/
+**/correct_equivalent/
+**/incorrect_data_mismatch/
+**/incorrect_execution/
+**/incorrect_projection/
+**/incorrect_reference/
+**/incorrect_row_count/
+**/incorrect_unknown/
