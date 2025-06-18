@@ -240,11 +240,17 @@ func (rc *ResultClassifier) ClassifyAndSaveResults(results []*AnalysisResult) er
 		var category string
 
 		if result.IsCorrect {
-			if result.IsEquivalent {
+			// 根据错误类型判断是精确匹配还是语义等价
+			if result.ErrorType == "精准匹配" {
 				category = "correct_exact_match"
-			} else {
+			} else if result.ErrorType == "语义匹配" {
 				category = "correct_equivalent"
+			} else {
+				// 向后兼容，默认为精确匹配
+				category = "correct_exact_match"
 			}
+		} else if result.ErrorType == "模糊查询" {
+			category = "ambiguous_queries"
 		} else {
 			// 根据错误类型分类
 			switch result.ErrorType {

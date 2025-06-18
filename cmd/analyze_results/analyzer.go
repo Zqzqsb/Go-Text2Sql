@@ -50,7 +50,7 @@ func (a *SQLAnalyzer) AnalyzeSQL(input InputResult, gtResult, predResult *ExecRe
 	}
 
 	// 检查是否为模糊查询
-	if input.Ambiguous == "True" {
+	if input.PredSQL == "AMBIGUOUS_QUERY" {
 		result.ErrorReason = "模糊查询需要澄清"
 		result.ErrorType = "模糊查询"
 		a.Stats.AmbiguousCount++
@@ -393,57 +393,114 @@ func (a *SQLAnalyzer) areResultsEquivalent(result1, result2 *ExecResult) (bool, 
 			dataRows1, dataRows2)
 	}
 
-	// 第三步：检查列名列表是否完全匹配（不考虑顺序）
+	// 第三步：检查列数是否相同
 	if len(headerToIndex1) != len(headerToIndex2) {
 		return false, fmt.Sprintf("列数不匹配: 标准SQL返回%d列, 预测SQL返回%d列",
 			len(headerToIndex1), len(headerToIndex2))
 	}
 
-	// 检查每个列名是否存在于两个结果中
+	// 第四步：尝试两种匹配策略
+	// 策略1：列名完全匹配（不考虑顺序）
+	columnsMatch := true
 	for header := range headerToIndex1 {
 		if _, exists := headerToIndex2[header]; !exists {
-			return false, "列名不匹配"
+			columnsMatch = false
+			break
 		}
 	}
 
-	// 第四步：对结果集进行转换，使其可比较（不考虑列顺序）
-	// 获取所有列名的统一顺序（按字母序排序）
-	sortedColumns := make([]string, 0, len(headerToIndex1))
-	for header := range headerToIndex1 {
-		sortedColumns = append(sortedColumns, header)
-	}
-	sort.Strings(sortedColumns)
+	var convertedRows1, convertedRows2 [][]string
 
-	// 转换结果集到可比较的格式
-	convertedRows1 := make([][]string, dataRows1)
-	convertedRows2 := make([][]string, dataRows2)
+	if columnsMatch {
+		// 策略1：列名匹配，按列名对应
+		// 获取所有列名的统一顺序（按字母序排序）
+		sortedColumns := make([]string, 0, len(headerToIndex1))
+		for header := range headerToIndex1 {
+			sortedColumns = append(sortedColumns, header)
+		}
+		sort.Strings(sortedColumns)
 
-	// 将标准SQL结果转化为统一列顺序的数据
-	for i := 1; i <= dataRows1; i++ {
-		row := make([]string, len(sortedColumns))
-		for j, colName := range sortedColumns {
-			colIndex := headerToIndex1[colName]
-			if colIndex < len(result1.Rows[i]) { // 防止索引越界
-				row[j] = result1.Rows[i][colIndex]
-			} else {
-				row[j] = ""
+		// 转换结果集到可比较的格式
+		convertedRows1 = make([][]string, dataRows1)
+		convertedRows2 = make([][]string, dataRows2)
+
+		// 将标准SQL结果转化为统一列顺序的数据
+		for i := 1; i <= dataRows1; i++ {
+			row := make([]string, len(sortedColumns))
+			for j, colName := range sortedColumns {
+				colIndex := headerToIndex1[colName]
+				if colIndex < len(result1.Rows[i]) { // 防止索引越界
+					row[j] = result1.Rows[i][colIndex]
+				} else {
+					row[j] = ""
+				}
+			}
+			convertedRows1[i-1] = row
+		}
+
+		// 将预测SQL结果转化为统一列顺序的数据
+		for i := 1; i <= dataRows2; i++ {
+			row := make([]string, len(sortedColumns))
+			for j, colName := range sortedColumns {
+				colIndex := headerToIndex2[colName]
+				if colIndex < len(result2.Rows[i]) { // 防止索引越界
+					row[j] = result2.Rows[i][colIndex]
+				} else {
+					row[j] = ""
+				}
+			}
+			convertedRows2[i-1] = row
+		}
+	} else {
+		// 策略2：列名不匹配，但列数相同，使用智能列重排序
+		// 基于每列第一个数据元素的hash值进行重排序，避免笛卡尔积计算
+		convertedRows1 = make([][]string, dataRows1)
+		convertedRows2 = make([][]string, dataRows2)
+
+		// 提取标准SQL的数据行
+		for i := 1; i <= dataRows1; i++ {
+			row := make([]string, len(headers1))
+			for j := 0; j < len(headers1); j++ {
+				if j < len(result1.Rows[i]) {
+					row[j] = result1.Rows[i][j]
+				} else {
+					row[j] = ""
+				}
+			}
+			convertedRows1[i-1] = row
+		}
+
+		// 智能列重排序：基于列的特征值（第一行数据的hash）
+		mapping := findColumnMapping(result1, result2)
+
+		if mapping != nil {
+			// 找到了合理的列映射，重新排序预测结果
+			for i := 1; i <= dataRows2; i++ {
+				row := make([]string, len(headers1))
+				for j := 0; j < len(headers1); j++ {
+					srcCol := mapping[j]
+					if srcCol < len(result2.Rows[i]) {
+						row[j] = result2.Rows[i][srcCol]
+					} else {
+						row[j] = ""
+					}
+				}
+				convertedRows2[i-1] = row
+			}
+		} else {
+			// 没有找到合理的映射，使用原始顺序
+			for i := 1; i <= dataRows2; i++ {
+				row := make([]string, len(headers2))
+				for j := 0; j < len(headers2); j++ {
+					if j < len(result2.Rows[i]) {
+						row[j] = result2.Rows[i][j]
+					} else {
+						row[j] = ""
+					}
+				}
+				convertedRows2[i-1] = row
 			}
 		}
-		convertedRows1[i-1] = row
-	}
-
-	// 将预测SQL结果转化为统一列顺序的数据
-	for i := 1; i <= dataRows2; i++ {
-		row := make([]string, len(sortedColumns))
-		for j, colName := range sortedColumns {
-			colIndex := headerToIndex2[colName]
-			if colIndex < len(result2.Rows[i]) { // 防止索引越界
-				row[j] = result2.Rows[i][colIndex]
-			} else {
-				row[j] = ""
-			}
-		}
-		convertedRows2[i-1] = row
 	}
 
 	// 第五步：比较数据内容（考虑行的顺序无关性）
@@ -471,10 +528,89 @@ func (a *SQLAnalyzer) areResultsEquivalent(result1, result2 *ExecResult) (bool, 
 	// 检查每一行是否存在于另一个结果集中
 	for rowStr := range rowStrings1 {
 		if !rowStrings2[rowStr] {
+			// 如果是列名不匹配导致的数据不一致，给出更精确的错误信息
+			if !columnsMatch {
+				return false, "列名不匹配"
+			}
 			return false, "数据不一致"
 		}
 	}
 
 	// 通过所有检查，认为结果等价
 	return true, ""
+}
+
+// findColumnMapping 基于列特征找到合理的列映射
+// 返回一个映射数组：mapping[i] = j 表示标准SQL的第i列对应预测SQL的第j列
+func findColumnMapping(result1, result2 *ExecResult) []int {
+	if len(result1.Rows) <= 1 || len(result2.Rows) <= 1 {
+		return nil
+	}
+
+	headers1 := result1.Rows[0]
+	headers2 := result2.Rows[0]
+
+	if len(headers1) != len(headers2) {
+		return nil
+	}
+
+	colCount := len(headers1)
+
+	// 为每列计算特征值（基于前几行数据的组合hash）
+	features1 := make([]string, colCount)
+	features2 := make([]string, colCount)
+
+	// 使用前3行数据计算特征，避免单行数据的偶然性
+	maxRows := minInt(4, len(result1.Rows), len(result2.Rows)) // 包含header行，所以实际是前3行数据
+
+	for col := 0; col < colCount; col++ {
+		// 计算标准SQL第col列的特征
+		var vals1 []string
+		for row := 1; row < maxRows; row++ {
+			if col < len(result1.Rows[row]) {
+				vals1 = append(vals1, result1.Rows[row][col])
+			}
+		}
+		features1[col] = strings.Join(vals1, ":")
+
+		// 计算预测SQL第col列的特征
+		var vals2 []string
+		for row := 1; row < maxRows; row++ {
+			if col < len(result2.Rows[row]) {
+				vals2 = append(vals2, result2.Rows[row][col])
+			}
+		}
+		features2[col] = strings.Join(vals2, ":")
+	}
+
+	// 尝试找到最佳匹配
+	mapping := make([]int, colCount)
+	used := make([]bool, colCount)
+
+	// 为每个标准SQL列找到最匹配的预测SQL列
+	for i := 0; i < colCount; i++ {
+		bestMatch := -1
+
+		for j := 0; j < colCount; j++ {
+			if used[j] {
+				continue
+			}
+
+			// 检查特征是否匹配
+			if features1[i] == features2[j] {
+				bestMatch = j
+				break
+			}
+		}
+
+		if bestMatch == -1 {
+			// 没有找到完全匹配的列，返回nil
+			return nil
+		}
+
+		mapping[i] = bestMatch
+		used[bestMatch] = true
+	}
+
+	return mapping
 }
