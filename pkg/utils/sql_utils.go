@@ -143,9 +143,9 @@ func FormatPromptWithFields(question string, schema string, fieldsInfo string, u
 
 返回字段:
 ` + fieldsInfo
-		}
+	}
 
-		prompt += `
+			prompt += `
 
 请确保返回的字段严格符合上述要求。`
 	}

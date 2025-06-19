@@ -98,8 +98,7 @@ func (g *InteractiveGenerator) GenerateInteractiveSQL(
 			fieldsInfo.Info)
 	}
 
-	// 第一步：询问 LLM 是否需要查询数据库
-	initialPrompt := g.buildInitialPrompt(question, schemaPrompt, fieldsInfo, dbType)
+	// 统一使用 buildPrompt 函数
 
 	fmt.Printf("🚀 开始交互式 SQL 生成...\n")
 	fmt.Printf("📋 数据库Schema已加载，包含 %d 个表\n", len(dbSchema.Tables))
@@ -113,10 +112,7 @@ func (g *InteractiveGenerator) GenerateInteractiveSQL(
 		fmt.Printf("🔄 第 %d 步 (最多 %d 步)\n", stepCount, MaxInteractiveSteps)
 
 		// 构建当前步骤的提示
-		currentPrompt := initialPrompt
-		if queryHistory != "" {
-			currentPrompt += "\n\n之前的查询历史:\n" + queryHistory
-		}
+		currentPrompt := g.buildPrompt(question, schemaPrompt, queryHistory, fieldsInfo, dbType, stepCount, MaxInteractiveSteps)
 
 		fmt.Printf("📝 即将发送给LLM的Prompt:\n")
 		fmt.Printf(strings.Repeat("┌", 1) + strings.Repeat("─", 58) + strings.Repeat("┐", 1) + "\n")
@@ -175,7 +171,7 @@ func (g *InteractiveGenerator) GenerateInteractiveSQL(
 		if queryReq.SQL == "" {
 			// 无法解析出有效的查询，尝试直接生成最终 SQL
 			fmt.Printf("⚠️  无法解析查询请求，直接生成最终 SQL\n")
-			finalPrompt := g.buildFinalPrompt(question, schemaPrompt, queryHistory, fieldsInfo, dbType)
+			finalPrompt := g.buildPrompt(question, schemaPrompt, queryHistory, fieldsInfo, dbType, MaxInteractiveSteps, MaxInteractiveSteps)
 
 			fmt.Printf("📝 最终SQL生成Prompt:\n")
 			fmt.Printf(strings.Repeat("┌", 1) + strings.Repeat("─", 58) + strings.Repeat("┐", 1) + "\n")
@@ -195,10 +191,14 @@ func (g *InteractiveGenerator) GenerateInteractiveSQL(
 			}
 			fmt.Printf(strings.Repeat("└", 1) + strings.Repeat("─", 58) + strings.Repeat("┘", 1) + "\n")
 
-			_ , err := g.client.GenerateSQL(finalPrompt, options)
+			finalResponse, err := g.client.GenerateSQL(finalPrompt, options)
 			if err != nil {
 				fmt.Printf("❌ 生成最终 SQL 失败: %v\n", err)
 				result.PredSQL = "ERROR: 生成最终 SQL 失败"
+			} else {
+				fmt.Printf("🎯 最终SQL已生成: %s\n", finalResponse.Response)
+				result.PredSQL = finalResponse.Response
+				result.Thinking = finalResponse.Thinking
 			}
 			break
 		}
@@ -232,61 +232,32 @@ func (g *InteractiveGenerator) GenerateInteractiveSQL(
 		result.QueryCount++
 
 		// 更新查询历史
-		queryHistory += fmt.Sprintf("\n查询 %d:\nSQL: %s\n推理: %s\n结果: %s\n",
-			stepCount, queryReq.SQL, queryReq.Reasoning, queryResp.Summary)
+		queryHistory += fmt.Sprintf("\n=== 查询 %d ===\nSQL: %s\n推理: %s\n执行结果: %s\n状态: %s\n",
+			stepCount, queryReq.SQL, queryReq.Reasoning, queryResp.Summary,
+			map[bool]string{true: "成功", false: "失败"}[queryResp.Success])
 
-		// 如果查询失败或 LLM 表示不需要更多查询，生成最终 SQL
+		// 如果查询失败或 LLM 表示不需要更多查询，退出循环让下次迭代处理
 		if !queryResp.Success || !queryReq.NeedMore {
-			fmt.Printf("📋 完成查询阶段，准备生成最终 SQL\n")
+			fmt.Printf("📋 查询阶段结束\n")
 			if !queryResp.Success {
 				fmt.Printf("   原因: 查询执行失败\n")
 			} else {
 				fmt.Printf("   原因: LLM表示不需要更多查询\n")
 			}
-
-			finalPrompt := g.buildFinalPrompt(question, schemaPrompt, queryHistory, fieldsInfo, dbType)
-			fmt.Printf("📝 最终SQL生成Prompt:\n")
-			fmt.Printf(strings.Repeat("┌", 1) + strings.Repeat("─", 58) + strings.Repeat("┐", 1) + "\n")
-			finalPromptLines := strings.Split(finalPrompt, "\n")
-			if !g.expandSchema && len(finalPromptLines) > 20 {
-				for i := 0; i < 10; i++ {
-					fmt.Printf("│ %s\n", finalPromptLines[i])
-				}
-				fmt.Printf("│ ... (省略 %d 行) ...\n", len(finalPromptLines)-20)
-				for i := len(finalPromptLines) - 10; i < len(finalPromptLines); i++ {
-					fmt.Printf("│ %s\n", finalPromptLines[i])
-				}
-			} else {
-				for _, line := range finalPromptLines {
-					fmt.Printf("│ %s\n", line)
-				}
-			}
-			fmt.Printf(strings.Repeat("└", 1) + strings.Repeat("─", 58) + strings.Repeat("┘", 1) + "\n")
-
-			finalResponse, err := g.client.GenerateSQL(finalPrompt, options)
-			if err != nil {
-				fmt.Printf("❌ 生成最终 SQL 失败: %v\n", err)
-				result.PredSQL = "ERROR: 生成最终 SQL 失败"
-			} else {
-				fmt.Printf("🎯 最终SQL已生成: %s\n", finalResponse.Response)
-				result.PredSQL = finalResponse.Response
-				result.Thinking = finalResponse.Thinking
-			}
-			break
+			// 不直接break，让下次迭代的buildPrompt自动处理为最终SQL生成
 		}
 	}
 
 	result.TotalSteps = stepCount
 	fmt.Printf("\n🏁 交互式生成完成!\n")
 	fmt.Printf("📊 统计信息: 共 %d 步，%d 次查询\n", stepCount, result.QueryCount)
-	fmt.Printf("📄 最终预测SQL: %s\n", result.PredSQL)
 	fmt.Printf(strings.Repeat("=", 80) + "\n")
 
 	return result
 }
 
-// buildInitialPrompt 构建初始提示
-func (g *InteractiveGenerator) buildInitialPrompt(question, schema string, fieldsInfo utils.FieldsInfo, dbType string) string {
+// buildPrompt 构建统一的提示词
+func (g *InteractiveGenerator) buildPrompt(question, schema, queryHistory string, fieldsInfo utils.FieldsInfo, dbType string, currentStep, totalSteps int) string {
 	// 确定数据库类型描述
 	var dbTypeDesc string
 	switch strings.ToLower(dbType) {
@@ -298,67 +269,7 @@ func (g *InteractiveGenerator) buildInitialPrompt(question, schema string, field
 		dbTypeDesc = "SQL"
 	}
 
-	prompt := fmt.Sprintf(`你需要将以下问题转换为%s查询。
-
-数据库结构:
-%s
-
-问题:
-%s`, dbTypeDesc, schema, question)
-
-	// 如果提供了字段信息，添加到提示中
-	if fieldsInfo.HasInfo {
-		if fieldsInfo.UseDescription {
-			prompt += `
-
-字段要求:
-` + fieldsInfo.Info
-		} else {
-			prompt += `
-
-返回字段:
-` + fieldsInfo.Info
-		}
-		prompt += `
-
-请确保返回的字段严格符合上述要求。`
-	}
-
-	prompt += fmt.Sprintf(`
-
-选择一种响应方式：
-
-方式1-查询数据库:
-<query>
-SQL: [你的查询SQL]
-REASONING: [查询原因]
-NEED_MORE: [true/false]
-</query>
-
-方式2-直接生成:
-<final>
-[最终SQL查询]
-</final>
-
-注意：每个查询最多返回%d行，最多%d次查询。`, g.maxQueryRows, MaxInteractiveSteps)
-
-	return prompt
-}
-
-// buildFinalPrompt 构建最终 SQL 生成提示
-func (g *InteractiveGenerator) buildFinalPrompt(question, schema, queryHistory string, fieldsInfo utils.FieldsInfo, dbType string) string {
-	// 确定数据库类型描述
-	var dbTypeDesc string
-	switch strings.ToLower(dbType) {
-	case "postgres", "postgresql":
-		dbTypeDesc = "PostgreSQL"
-	case "sqlite":
-		dbTypeDesc = "SQLite"
-	default:
-		dbTypeDesc = "SQL"
-	}
-
-	prompt := fmt.Sprintf(`基于以下信息生成%s查询：
+	prompt := fmt.Sprintf(`你需要将以下问题转换为符合%s语法的查询。
 
 数据库结构:
 %s
@@ -384,8 +295,65 @@ func (g *InteractiveGenerator) buildFinalPrompt(question, schema, queryHistory s
 请确保返回的字段严格符合上述要求,**不多字段也不少字段**。`
 	}
 
+	// 添加查询历史（如果有）
 	if queryHistory != "" {
 		prompt += "\n\n查询历史:\n" + queryHistory
+	}
+
+	// 添加当前状态信息
+	prompt += fmt.Sprintf(`
+
+当前状态: 第%d步 / 最多%d步`, currentStep, totalSteps)
+
+	isLastStep := currentStep >= totalSteps
+
+	if isLastStep {
+		// 最后一步，必须生成最终SQL
+		prompt += `
+
+⚠️ 这是最后一步，必须直接生成最终SQL，不能再进行查询！
+
+<final>
+[最终SQL查询]
+</final>`
+
+		if queryHistory != "" {
+			prompt += `
+
+基于上述查询历史，综合所有查询结果生成最终SQL。`
+		} else {
+			prompt += `
+
+基于数据库结构直接生成SQL。`
+		}
+	} else {
+		// 还可以继续查询
+		remainingSteps := totalSteps - currentStep
+		prompt += fmt.Sprintf(`，还可以进行%d步 , 如果步数用完，请直接生成最终SQL。
+
+选择一种响应方式：
+
+方式1-查询数据库(推荐渐进式探索):
+<query>
+SQL: [你的查询SQL]
+REASONING: [查询原因]
+NEED_MORE: [true/false]
+</query>
+
+方式2-直接生成:
+<final>
+[最终SQL查询]
+</final>
+
+**强烈建议使用渐进式查询策略：**
+1. 优先使用简单的探索性查询，例如：
+   - 查看表的结构和样本数据: SELECT * FROM 表名 LIMIT 30
+   - 了解字段的取值范围: SELECT DISTINCT 字段名 FROM 表名 LIMIT 50
+   - 检查数据分布: SELECT COUNT(*) FROM 表名 WHERE 条件
+2. 基于每次查询结果逐步构建更复杂的查询
+3. 确认关键信息后再生成最终SQL
+
+注意：每个查询最多返回%d行。`, remainingSteps , g.maxQueryRows)
 	}
 
 	prompt += `
@@ -409,15 +377,15 @@ func (g *InteractiveGenerator) parseLLMResponse(response string) (QueryRequest, 
 	if len(queryMatches) >= 2 {
 		queryContent := queryMatches[1]
 
-		// 提取 SQL
-		sqlPattern := regexp.MustCompile(`SQL:\s*(.*?)(?:\n|REASONING:|$)`)
+		// 提取 SQL - 使用(?s)标志让.匹配换行符，并使用非贪婪匹配到REASONING:
+		sqlPattern := regexp.MustCompile(`(?s)SQL:\s*(.*?)(?:REASONING:|$)`)
 		sqlMatches := sqlPattern.FindStringSubmatch(queryContent)
 		if len(sqlMatches) < 2 {
 			return QueryRequest{}, false
 		}
 
-		// 提取推理
-		reasoningPattern := regexp.MustCompile(`REASONING:\s*(.*?)(?:\n|NEED_MORE:|$)`)
+		// 提取推理 - 使用(?s)标志让.匹配换行符
+		reasoningPattern := regexp.MustCompile(`(?s)REASONING:\s*(.*?)(?:NEED_MORE:|$)`)
 		reasoningMatches := reasoningPattern.FindStringSubmatch(queryContent)
 		reasoning := ""
 		if len(reasoningMatches) >= 2 {
