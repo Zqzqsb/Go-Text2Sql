@@ -311,7 +311,7 @@ func (g *InteractiveGenerator) buildPrompt(question, schema, queryHistory string
 		// 最后一步，必须生成最终SQL
 		prompt += `
 
-⚠️ 这是最后一步，必须直接生成最终SQL，不能再进行查询！
+⚠️ 这是最后一步，必须直接生成最终SQL，不能再进行查询！按照格式要求，在标签中给出最终 sql ，不需要其他信息
 
 <final>
 [最终SQL查询]
@@ -329,9 +329,9 @@ func (g *InteractiveGenerator) buildPrompt(question, schema, queryHistory string
 	} else {
 		// 还可以继续查询
 		remainingSteps := totalSteps - currentStep
-		prompt += fmt.Sprintf(`，还可以进行%d步 , 如果步数用完，请直接生成最终SQL。
+		prompt += fmt.Sprintf(`，还可以进行%d步。
 
-选择一种响应方式：
+选择一种响应方式,每次只能返回一对<query/>或者<final/>标签,不能在一次 query 中要求执行多个 sql：
 
 方式1-查询数据库(推荐渐进式探索):
 <query>
