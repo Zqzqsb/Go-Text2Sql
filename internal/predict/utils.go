@@ -77,7 +77,15 @@ func PrintResult(result SQLResult) {
 	fmt.Printf("ID: %d\n", result.ID)
 	fmt.Printf("数据库: %s\n", result.DBName)
 	fmt.Printf("问题: %s\n", result.Question)
-	fmt.Printf("预测SQL: %s\n", result.PredSQL)
+
+	// 为预测SQL添加框框显示
+	fmt.Printf("🎯 预测SQL:\n")
+	fmt.Printf(strings.Repeat("┌", 1) + strings.Repeat("─", 78) + strings.Repeat("┐", 1) + "\n")
+	predSQLLines := strings.Split(result.PredSQL, "\n")
+	for _, line := range predSQLLines {
+		fmt.Printf("│ %s\n", line)
+	}
+	fmt.Printf(strings.Repeat("└", 1) + strings.Repeat("─", 78) + strings.Repeat("┘", 1) + "\n")
 
 	// 如果有思考过程，输出思考过程的前200个字符
 	if result.Thinking != "" {

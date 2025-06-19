@@ -170,7 +170,14 @@ func PrintInteractiveResult(result InteractiveResult) {
 		fmt.Printf("查询步骤:\n")
 		for i, step := range result.Steps {
 			if step.StepType == "query" {
-				fmt.Printf("  步骤%d - 查询: %s\n", i+1, step.Query)
+				// 为查询步骤添加框框显示
+				fmt.Printf("  步骤%d - 查询:\n", i+1)
+				fmt.Printf("  " + strings.Repeat("┌", 1) + strings.Repeat("─", 76) + strings.Repeat("┐", 1) + "\n")
+				queryLines := strings.Split(step.Query, "\n")
+				for _, line := range queryLines {
+					fmt.Printf("  │ %s\n", line)
+				}
+				fmt.Printf("  " + strings.Repeat("└", 1) + strings.Repeat("─", 76) + strings.Repeat("┘", 1) + "\n")
 				fmt.Printf("  推理: %s\n", step.Reasoning)
 			} else {
 				fmt.Printf("  步骤%d - 最终生成\n", i+1)
@@ -180,7 +187,15 @@ func PrintInteractiveResult(result InteractiveResult) {
 		fmt.Printf("交互模式: 否\n")
 	}
 
-	fmt.Printf("预测SQL: %s\n", result.PredSQL)
+	// 为预测SQL添加框框显示
+	fmt.Printf("🎯 预测SQL:\n")
+	fmt.Printf(strings.Repeat("┌", 1) + strings.Repeat("─", 78) + strings.Repeat("┐", 1) + "\n")
+	predSQLLines := strings.Split(result.PredSQL, "\n")
+	for _, line := range predSQLLines {
+		fmt.Printf("│ %s\n", line)
+	}
+	fmt.Printf(strings.Repeat("└", 1) + strings.Repeat("─", 78) + strings.Repeat("┘", 1) + "\n")
+
 	if result.Ambiguous == "True" {
 		fmt.Printf("模糊查询: 是\n")
 	}

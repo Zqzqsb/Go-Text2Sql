@@ -255,9 +255,6 @@ func main() {
 
 			// 保存交互式结果
 			predict.SaveInteractiveResult(outputFp, interactiveResult)
-
-			// 输出结果
-			predict.PrintInteractiveResult(interactiveResult)
 		}
 	} else {
 		// 生成SQL

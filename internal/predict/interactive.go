@@ -222,7 +222,13 @@ func (g *InteractiveGenerator) GenerateInteractiveSQL(
 				fmt.Printf("❌ 生成最终 SQL 最终失败: %v\n", err)
 				result.PredSQL = "ERROR: 生成最终 SQL 失败"
 			} else {
-				fmt.Printf("🎯 最终SQL已生成: %s\n", finalResponse.Response)
+				fmt.Printf("🎯 最终SQL已生成:\n")
+				fmt.Printf(strings.Repeat("┌", 1) + strings.Repeat("─", 78) + strings.Repeat("┐", 1) + "\n")
+				sqlLines := strings.Split(finalResponse.Response, "\n")
+				for _, line := range sqlLines {
+					fmt.Printf("│ %s\n", line)
+				}
+				fmt.Printf(strings.Repeat("└", 1) + strings.Repeat("─", 78) + strings.Repeat("┘", 1) + "\n")
 				result.PredSQL = finalResponse.Response
 				result.Thinking = finalResponse.Thinking
 			}
@@ -231,18 +237,29 @@ func (g *InteractiveGenerator) GenerateInteractiveSQL(
 
 		// 执行查询
 		fmt.Printf("🔍 需要执行SQL查询:\n")
-		fmt.Printf("📄 SQL: %s\n", queryReq.SQL)
-		fmt.Printf("🤔 推理: %s\n", queryReq.Reasoning)
-		fmt.Printf("🔄 是否可能需要更多查询: %t\n", queryReq.NeedMore)
+		fmt.Printf(strings.Repeat("┌", 1) + strings.Repeat("─", 78) + strings.Repeat("┐", 1) + "\n")
+		fmt.Printf("│ 📄 SQL: %s\n", queryReq.SQL)
+		fmt.Printf("│ 🤔 推理: %s\n", queryReq.Reasoning)
+		fmt.Printf("│ 🔄 是否可能需要更多查询: %t\n", queryReq.NeedMore)
+		fmt.Printf(strings.Repeat("└", 1) + strings.Repeat("─", 78) + strings.Repeat("┘", 1) + "\n")
 		fmt.Printf("⚡ 正在执行查询...\n")
 
 		queryResp := g.executeQuery(dbPath, queryReq.SQL)
 
 		if queryResp.Success {
 			fmt.Printf("✅ 查询执行成功!\n")
-			fmt.Printf("📊 返回结果: %s\n", queryResp.Summary)
+			fmt.Printf(strings.Repeat("┌", 1) + strings.Repeat("─", 78) + strings.Repeat("┐", 1) + "\n")
+			// 对于多行结果，每行单独显示
+			summaryLines := strings.Split(queryResp.Summary, "\n")
+			for _, line := range summaryLines {
+				fmt.Printf("│ %s\n", line)
+			}
+			fmt.Printf(strings.Repeat("└", 1) + strings.Repeat("─", 78) + strings.Repeat("┘", 1) + "\n")
 		} else {
-			fmt.Printf("❌ 查询执行失败: %s\n", queryResp.Error)
+			fmt.Printf("❌ 查询执行失败:\n")
+			fmt.Printf(strings.Repeat("┌", 1) + strings.Repeat("─", 78) + strings.Repeat("┐", 1) + "\n")
+			fmt.Printf("│ ❌ 错误: %s\n", queryResp.Error)
+			fmt.Printf(strings.Repeat("└", 1) + strings.Repeat("─", 78) + strings.Repeat("┘", 1) + "\n")
 		}
 
 		// 记录查询步骤
@@ -360,7 +377,7 @@ NEED_MORE: [true/false]
 2. 基于每次查询结果逐步构建更复杂的查询
 3. 确认关键信息后再生成最终SQL
 
-注意：每个<query/>查询最多返回%d行,<final/> sql 不受此限制(一定不要为 sql 添加 LIMIT 限制，除非问题里明确要求)。`, remainingSteps, g.maxQueryRows)
+注意：每个<query/>查询最多返回%d行,<final/> sql 不受此限制(一定不要为最终 sql 添加 LIMIT 限制，除非问题里明确要求)。`, remainingSteps, g.maxQueryRows)
 	}
 
 	prompt += `
