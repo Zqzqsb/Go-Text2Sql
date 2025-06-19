@@ -25,6 +25,16 @@ func generatePredictionFile(jsonlFile string, predFile string) {
 		if line == "" {
 			continue
 		}
+
+		// 首先尝试解析为交互式结果
+		var interactiveResult InteractiveResult
+		if err := json.Unmarshal([]byte(line), &interactiveResult); err == nil && (interactiveResult.IsInteractive || len(interactiveResult.Steps) > 0) {
+			// 如果是交互式结果，提取 SQLResult 部分
+			results = append(results, interactiveResult.SQLResult)
+			continue
+		}
+
+		// 否则按普通结果解析
 		var result SQLResult
 		if err := json.Unmarshal([]byte(line), &result); err != nil {
 			fmt.Printf("解析行失败: %v\n", err)
@@ -42,7 +52,7 @@ func generatePredictionFile(jsonlFile string, predFile string) {
 	defer predFileObj.Close()
 
 	for _, result := range results {
-		if result.Ambiguous != "" {
+		if result.Ambiguous == "True" {
 			// 对于模糊查询，写入特殊标记
 			fmt.Fprintf(predFileObj, "AMBIGUOUS_QUERY\t%d\n", result.ID)
 		} else {
@@ -88,16 +98,16 @@ func generatePredictionFile(jsonlFile string, predFile string) {
 
 		// 创建简化的结果文件
 		resultData := map[string]interface{}{
-			"id":               result.ID,
-			"db_id":            result.DBName,
-			"question":         result.Question,
-			"gt_sql":           result.GTSQL,
-			"pred_sql":         result.PredSQL,
+			"id":                 result.ID,
+			"db_id":              result.DBName,
+			"question":           result.Question,
+			"gt_sql":             result.GTSQL,
+			"pred_sql":           result.PredSQL,
 			"thinking[optional]": result.Thinking,
 		}
-		
+
 		// 如果是模糊查询，添加 Ambiguous 字段
-		if result.Ambiguous != "" {
+		if result.Ambiguous == "True" {
 			resultData["ambigous[optional]"] = result.Ambiguous
 		}
 
@@ -118,7 +128,7 @@ func generatePredictionFile(jsonlFile string, predFile string) {
 		}
 
 		// 如果是模糊查询，保存到模糊问题目录
-		if result.Ambiguous != "" {
+		if result.Ambiguous == "True" {
 			ambiguousFilePath := filepath.Join(ambiguousQueriesDir, fmt.Sprintf("ambiguous_%d.json", result.ID))
 			if err := os.WriteFile(ambiguousFilePath, resultJSON, 0644); err != nil {
 				fmt.Printf("写入模糊问题文件失败: %v\n", err)
@@ -130,7 +140,55 @@ func generatePredictionFile(jsonlFile string, predFile string) {
 	fmt.Printf("模糊问题结果已保存到: %s\n", ambiguousQueriesDir)
 }
 
+// 保存交互式结果
+func saveInteractiveResult(fp *os.File, result InteractiveResult) {
+	// 将交互式结果转换为JSON并写入文件
+	jsonData, err := json.Marshal(result)
+	if err != nil {
+		fmt.Printf("序列化交互式结果失败: %v\n", err)
+		return
+	}
+
+	if _, err := fp.Write(jsonData); err != nil {
+		fmt.Printf("写入交互式结果失败: %v\n", err)
+		return
+	}
+
+	if _, err := fp.WriteString("\n"); err != nil {
+		fmt.Printf("写入换行符失败: %v\n", err)
+	}
+}
+
+// 输出交互式结果
+func printInteractiveResult(result InteractiveResult) {
+	fmt.Printf("样例ID: %d\n", result.ID)
+	fmt.Printf("数据库: %s\n", result.DBName)
+	fmt.Printf("问题: %s\n", result.Question)
+
+	if result.IsInteractive {
+		fmt.Printf("交互模式: 是 (%d步，%d次查询)\n", result.TotalSteps, result.QueryCount)
+		fmt.Printf("查询步骤:\n")
+		for i, step := range result.Steps {
+			if step.StepType == "query" {
+				fmt.Printf("  步骤%d - 查询: %s\n", i+1, step.Query)
+				fmt.Printf("  推理: %s\n", step.Reasoning)
+			} else {
+				fmt.Printf("  步骤%d - 最终生成\n", i+1)
+			}
+		}
+	} else {
+		fmt.Printf("交互模式: 否\n")
+	}
+
+	fmt.Printf("预测SQL: %s\n", result.PredSQL)
+	if result.Ambiguous == "True" {
+		fmt.Printf("模糊查询: 是\n")
+	}
+	fmt.Println("---")
+}
+
 // 按行分割字符串
 func splitLines(s string) []string {
-	return filepath.SplitList(strings.ReplaceAll(s, "\r\n", "\n"))
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.Split(s, "\n")
 }

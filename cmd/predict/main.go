@@ -30,6 +30,10 @@ func main() {
 	preserveChineseTerms := flag.Bool("preserve-chinese", true, "保留中文词汇不翻译")
 	dbType := flag.String("db-type", "sqlite", "数据库类型 (sqlite, postgres)")
 	fieldsInfoType := flag.String("fields-info-type", "", "字段信息类型 (empty, fields, description)")
+	interactiveMode := flag.Bool("interactive", true, "启用交互式 SQL 生成模式")
+	maxQueryRows := flag.Int("max-query-rows", 100, "交互式模式下每个查询最大返回行数")
+	expandSchema := flag.Bool("expand-schema", false, "在日志中完整显示schema信息")
+	verboseDebug := flag.Bool("verbose-debug", false, "输出详细的调试信息（完整prompt和LLM响应）")
 
 	flag.Parse()
 
@@ -105,11 +109,15 @@ func main() {
 	options.DisableThinking = *disableThinking
 	options.PreserveChineseTerms = *preserveChineseTerms
 	options.FieldsInfoType = *fieldsInfoType
+	options.VerboseDebug = *verboseDebug
 
 	// 创建输出目录
 	runID := fmt.Sprintf("%s_%s", currentDataset.Name, *split)
 	if usePostgreSQL {
 		runID += "_pg"
+	}
+	if *interactiveMode {
+		runID += "_interactive"
 	}
 	if *fieldsInfoType != "" {
 		runID += "_with_" + *fieldsInfoType + "_info"
@@ -180,22 +188,49 @@ func main() {
 
 	// 处理样例
 	ambiguousQueriesCount = 0 // 重置模糊查询计数
-	for i, example := range processedExamples {
-		fmt.Printf("处理样例 %d/%d...\n", i+1, len(processedExamples))
 
-		// 生成SQL
-		result := generateSQL(client, options, currentDataset, example)
+	// 如果启用交互式模式，创建交互式生成器
+	if *interactiveMode {
+		fmt.Printf("使用交互式 SQL 生成模式 (最大查询行数: %d)\n", *maxQueryRows)
+		// 创建交互式生成器
+		generator := NewInteractiveGenerator(client, *maxQueryRows)
+		generator.SetExpandSchema(*expandSchema)
 
-		// 检查是否为模糊查询
-		if result.Ambiguous == "True" {
-			ambiguousQueriesCount++
+		for i, example := range processedExamples {
+			fmt.Printf("处理样例 %d/%d...\n", i+1, len(processedExamples))
+
+			// 使用交互式生成
+			interactiveResult := generator.GenerateInteractiveSQL(currentDataset, example, options)
+
+			// 检查是否为模糊查询
+			if interactiveResult.Ambiguous == "True" {
+				ambiguousQueriesCount++
+			}
+
+			// 保存交互式结果
+			saveInteractiveResult(outputFp, interactiveResult)
+
+			// 输出结果
+			printInteractiveResult(interactiveResult)
 		}
+	} else {
+		// 生成SQL
+		for i, example := range processedExamples {
+			fmt.Printf("处理样例 %d/%d...\n", i+1, len(processedExamples))
 
-		// 保存结果
-		saveResult(outputFp, result)
+			result := generateSQL(client, options, currentDataset, example)
 
-		// 输出结果
-		printResult(result)
+			// 检查是否为模糊查询
+			if result.Ambiguous == "True" {
+				ambiguousQueriesCount++
+			}
+
+			// 保存结果
+			saveResult(outputFp, result)
+
+			// 输出结果
+			printResult(result)
+		}
 	}
 
 	fmt.Printf("\n结果已保存到: %s\n", outputFile)
