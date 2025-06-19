@@ -1,20 +1,61 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/zqzqsb/gosql/internal/agents/query_validator"
 	"github.com/zqzqsb/gosql/internal/config"
 	"github.com/zqzqsb/gosql/internal/dataset"
 	"github.com/zqzqsb/gosql/internal/llm"
+	"github.com/zqzqsb/gosql/internal/predict"
 )
 
 var currentDataset *dataset.Dataset
 var ambiguousQueriesCount int // 统计模糊查询数量
 var usePostgreSQL bool        // 是否使用PostgreSQL
+
+// checkIfAmbiguous 检测查询是否模糊（前置模块）
+func checkIfAmbiguous(client llm.LLM, question string) bool {
+	validator := query_validator.NewQueryValidator()
+	validator.WithLLM(client)
+
+	isAmbiguous, _, _ := validator.DetectAmbiguity(context.Background(), question)
+	return isAmbiguous
+}
+
+// createAmbiguousResult 创建模糊查询的结果
+func createAmbiguousResult(example map[string]interface{}) predict.SQLResult {
+	id := predict.GetExampleID(example)
+	dbID, _ := example["db_id"].(string)
+	question, _ := example["question"].(string)
+	gtSQL, _ := example["query"].(string)
+
+	return predict.SQLResult{
+		ID:        id,
+		DBName:    dbID,
+		Question:  question,
+		GTSQL:     gtSQL,
+		PredSQL:   "AMBIGUOUS_QUERY",
+		Thinking:  "",
+		Ambiguous: "True",
+	}
+}
+
+// createAmbiguousInteractiveResult 创建模糊查询的交互式结果
+func createAmbiguousInteractiveResult(example map[string]interface{}) predict.InteractiveResult {
+	sqlResult := createAmbiguousResult(example)
+
+	return predict.InteractiveResult{
+		SQLResult:     sqlResult,
+		Steps:         make([]predict.InteractiveStep, 0),
+		IsInteractive: false,
+	}
+}
 
 func main() {
 	// 命令行参数
@@ -151,7 +192,7 @@ func main() {
 	// 如果指定了目标ID，只处理该ID的样例
 	if *targetID >= 0 {
 		for _, example := range examples {
-			id := getExampleID(example)
+			id := predict.GetExampleID(example)
 			if id == *targetID {
 				processedExamples = append(processedExamples, example)
 				break
@@ -172,7 +213,7 @@ func main() {
 					continue
 				}
 			} else {
-				id := getExampleID(example)
+				id := predict.GetExampleID(example)
 				if id < *startID {
 					continue
 				}
@@ -193,50 +234,60 @@ func main() {
 	if *interactiveMode {
 		fmt.Printf("使用交互式 SQL 生成模式 (最大查询行数: %d)\n", *maxQueryRows)
 		// 创建交互式生成器
-		generator := NewInteractiveGenerator(client, *maxQueryRows)
+		generator := predict.NewInteractiveGenerator(client, *maxQueryRows)
 		generator.SetExpandSchema(*expandSchema)
 
 		for i, example := range processedExamples {
 			fmt.Printf("处理样例 %d/%d...\n", i+1, len(processedExamples))
 
-			// 使用交互式生成
-			interactiveResult := generator.GenerateInteractiveSQL(currentDataset, example, options)
-
-			// 检查是否为模糊查询
-			if interactiveResult.Ambiguous == "True" {
+			// 前置模糊查询检测
+			question, _ := example["question"].(string)
+			if checkIfAmbiguous(client, question) {
 				ambiguousQueriesCount++
+				interactiveResult := createAmbiguousInteractiveResult(example)
+				predict.SaveInteractiveResult(outputFp, interactiveResult)
+				predict.PrintInteractiveResult(interactiveResult)
+				continue
 			}
 
+			// 使用交互式生成
+			interactiveResult := generator.GenerateInteractiveSQL(currentDataset, example, options, *dbType)
+
 			// 保存交互式结果
-			saveInteractiveResult(outputFp, interactiveResult)
+			predict.SaveInteractiveResult(outputFp, interactiveResult)
 
 			// 输出结果
-			printInteractiveResult(interactiveResult)
+			predict.PrintInteractiveResult(interactiveResult)
 		}
 	} else {
 		// 生成SQL
 		for i, example := range processedExamples {
 			fmt.Printf("处理样例 %d/%d...\n", i+1, len(processedExamples))
 
-			result := generateSQL(client, options, currentDataset, example)
-
-			// 检查是否为模糊查询
-			if result.Ambiguous == "True" {
+			// 前置模糊查询检测
+			question, _ := example["question"].(string)
+			if checkIfAmbiguous(client, question) {
 				ambiguousQueriesCount++
+				result := createAmbiguousResult(example)
+				predict.SaveResult(outputFp, result)
+				predict.PrintResult(result)
+				continue
 			}
 
+			result := predict.GenerateSQL(client, options, currentDataset, example, *dbType)
+
 			// 保存结果
-			saveResult(outputFp, result)
+			predict.SaveResult(outputFp, result)
 
 			// 输出结果
-			printResult(result)
+			predict.PrintResult(result)
 		}
 	}
 
 	fmt.Printf("\n结果已保存到: %s\n", outputFile)
 
 	// 生成预测文件
-	generatePredictionFile(outputFile, predFile)
+	predict.GeneratePredictionFile(outputFile, predFile)
 
 	fmt.Printf("\n总共处理了 %d 个样例，其中 %d 个是模糊查询\n",
 		len(processedExamples), ambiguousQueriesCount)
