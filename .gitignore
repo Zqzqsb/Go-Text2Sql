@@ -55,3 +55,6 @@ config_*
 **/incorrect_reference/
 **/incorrect_row_count/
 **/incorrect_unknown/
+
+.staticcheck.conf
+.staticcheckignore
