@@ -5,6 +5,51 @@ import (
 	"strings"
 )
 
+// FieldsInfo 表示字段信息
+type FieldsInfo struct {
+	Info           string
+	UseDescription bool
+	HasInfo        bool
+}
+
+// ExtractFieldsInfo 提取字段信息
+func ExtractFieldsInfo(example map[string]interface{}, fieldsInfoType string) FieldsInfo {
+	result := FieldsInfo{
+		Info:           "",
+		UseDescription: false,
+		HasInfo:        false,
+	}
+
+	if example == nil || fieldsInfoType == "" {
+		return result
+	}
+
+	switch fieldsInfoType {
+	case "fields":
+		// 使用精确字段列表
+		if fields, ok := example["result_fields"].([]interface{}); ok && len(fields) > 0 {
+			fieldStrs := make([]string, 0, len(fields))
+			for _, f := range fields {
+				if fs, ok := f.(string); ok {
+					fieldStrs = append(fieldStrs, fs)
+				}
+			}
+			result.Info = strings.Join(fieldStrs, ", ")
+			result.UseDescription = false
+			result.HasInfo = true
+		}
+	case "description":
+		// 使用字段描述
+		if description, ok := example["result_fields_description"].(string); ok && description != "" {
+			result.Info = description
+			result.UseDescription = true
+			result.HasInfo = true
+		}
+	}
+
+	return result
+}
+
 // ProcessDuplication 处理SQL中的重复部分
 func ProcessDuplication(sql string) string {
 	// 移除重复的SELECT语句
@@ -60,14 +105,25 @@ func ExtractFinalSQL(response string) string {
 }
 
 // FormatPrompt 格式化提示
-func FormatPrompt(question string, schema string) string {
-	return FormatPromptWithFields(question, schema, "", false)
+func FormatPrompt(question string, schema string, dbType string) string {
+	return FormatPromptWithFields(question, schema, "", false, dbType)
 }
 
 // FormatPromptWithFields 格式化提示，并支持字段信息或字段描述
-func FormatPromptWithFields(question string, schema string, fieldsInfo string, useDescription bool) string {
+func FormatPromptWithFields(question string, schema string, fieldsInfo string, useDescription bool, dbType string) string {
+	// 确定数据库类型描述
+	var dbTypeDesc string
+	switch strings.ToLower(dbType) {
+	case "postgres", "postgresql":
+		dbTypeDesc = "PostgreSQL"
+	case "sqlite":
+		dbTypeDesc = "SQLite"
+	default:
+		dbTypeDesc = "SQL"
+	}
+
 	// 基础提示
-	prompt := `请将以下自然语言问题转换为 符合 PostgreSQL 语法的 SQL查询语句。
+	prompt := `请将以下自然语言问题转换为符合 ` + dbTypeDesc + ` 语法的SQL查询语句。
 
 数据库结构:
 ` + schema + `
@@ -80,31 +136,23 @@ func FormatPromptWithFields(question string, schema string, fieldsInfo string, u
 		if useDescription {
 			prompt += `
 
-查询字段描述:
+字段要求:
 ` + fieldsInfo
 		} else {
 			prompt += `
 
-需要返回的字段:
+返回字段:
 ` + fieldsInfo
 		}
-	}
 
-	if fieldsInfo != "" {
-		if useDescription {
-			prompt += `
+		prompt += `
 
-请特别注意上面给出的字段描述，确保你生成的SQL查询返回的字段符合这些要求。`
-		} else {
-			prompt += `
-
-请特别注意上面给出的字段列表，确保你生成的SQL查询的SELECT部分只返回这些字段，不多不少。`
-		}
+请确保返回的字段严格符合上述要求。`
 	}
 
 	prompt += `
 
-sql在保证正确性的情况下尽可能简单可读，确保最终的SQL查询是单独一行，以分号结尾。注意,请不要给出多个sql，答案仅仅需要最可能是正确的一个sql查询。`
+要求：简洁正确的SQL，单行输出，以分号结尾。`
 
 	return prompt
 }
