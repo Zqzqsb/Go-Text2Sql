@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/zqzqsb/gosql/internal/database"
 	"github.com/zqzqsb/gosql/internal/dataset"
@@ -15,7 +16,10 @@ import (
 )
 
 const (
-	MaxInteractiveSteps = 5 // 最大交互步骤数
+	MaxInteractiveSteps = 5                // 最大交互步骤数
+	MaxRetryAttempts    = 3                // 最大重试次数
+	InitialRetryDelay   = 2 * time.Second  // 初始重试延迟
+	MaxRetryDelay       = 30 * time.Second // 最大重试延迟
 )
 
 // InteractiveGenerator 交互式 SQL 生成器
@@ -24,6 +28,11 @@ type InteractiveGenerator struct {
 	executor     *database.DBExecutor
 	maxQueryRows int  // 最大返回行数，遵循最小必要原则
 	expandSchema bool // 是否在日志中展开显示schema
+
+	// 重试配置
+	maxRetryAttempts int           // 最大重试次数
+	initialDelay     time.Duration // 初始重试延迟
+	maxDelay         time.Duration // 最大重试延迟
 }
 
 // NewInteractiveGenerator 创建新的交互式生成器
@@ -36,12 +45,30 @@ func NewInteractiveGenerator(client llm.LLM, maxQueryRows int) *InteractiveGener
 		executor:     database.NewDBExecutor(),
 		maxQueryRows: maxQueryRows,
 		expandSchema: false, // 默认不展开
+
+		// 默认重试配置
+		maxRetryAttempts: MaxRetryAttempts,
+		initialDelay:     InitialRetryDelay,
+		maxDelay:         MaxRetryDelay,
 	}
 }
 
 // SetExpandSchema 设置是否展开显示schema
 func (g *InteractiveGenerator) SetExpandSchema(expand bool) {
 	g.expandSchema = expand
+}
+
+// SetRetryConfig 设置重试配置
+func (g *InteractiveGenerator) SetRetryConfig(maxAttempts int, initialDelay, maxDelay time.Duration) {
+	if maxAttempts > 0 {
+		g.maxRetryAttempts = maxAttempts
+	}
+	if initialDelay > 0 {
+		g.initialDelay = initialDelay
+	}
+	if maxDelay > 0 {
+		g.maxDelay = maxDelay
+	}
 }
 
 // GenerateInteractiveSQL 交互式生成 SQL
@@ -134,10 +161,9 @@ func (g *InteractiveGenerator) GenerateInteractiveSQL(
 		fmt.Printf(strings.Repeat("└", 1) + strings.Repeat("─", 58) + strings.Repeat("┘", 1) + "\n")
 
 		// 询问 LLM 下一步动作
-		fmt.Printf("🤖 正在请求LLM响应...\n")
-		response, err := g.client.GenerateText(currentPrompt, options)
+		response, err := g.retryLLMGenerateText(currentPrompt, options)
 		if err != nil {
-			fmt.Printf("❌ LLM 请求失败: %v\n", err)
+			fmt.Printf("❌ LLM 请求最终失败: %v\n", err)
 			result.PredSQL = "ERROR: LLM 请求失败"
 			return result
 		}
@@ -191,9 +217,9 @@ func (g *InteractiveGenerator) GenerateInteractiveSQL(
 			}
 			fmt.Printf(strings.Repeat("└", 1) + strings.Repeat("─", 58) + strings.Repeat("┘", 1) + "\n")
 
-			finalResponse, err := g.client.GenerateSQL(finalPrompt, options)
+			finalResponse, err := g.retryLLMGenerateSQL(finalPrompt, options)
 			if err != nil {
-				fmt.Printf("❌ 生成最终 SQL 失败: %v\n", err)
+				fmt.Printf("❌ 生成最终 SQL 最终失败: %v\n", err)
 				result.PredSQL = "ERROR: 生成最终 SQL 失败"
 			} else {
 				fmt.Printf("🎯 最终SQL已生成: %s\n", finalResponse.Response)
@@ -353,7 +379,7 @@ NEED_MORE: [true/false]
 2. 基于每次查询结果逐步构建更复杂的查询
 3. 确认关键信息后再生成最终SQL
 
-注意：每个查询最多返回%d行。`, remainingSteps , g.maxQueryRows)
+注意：每个查询最多返回%d行。`, remainingSteps, g.maxQueryRows)
 	}
 
 	prompt += `
@@ -361,6 +387,74 @@ NEED_MORE: [true/false]
 要求：生成正确的SQL，语法正确，逻辑符合问题要求，以分号结尾。`
 
 	return prompt
+}
+
+// retryLLMGenerateText 带重试的文本生成
+func (g *InteractiveGenerator) retryLLMGenerateText(prompt string, options llm.Options) (string, error) {
+	var lastErr error
+	delay := g.initialDelay
+
+	for attempt := 1; attempt <= g.maxRetryAttempts; attempt++ {
+		if attempt > 1 {
+			fmt.Printf("🔄 第 %d 次重试LLM请求，等待 %.1f 秒...\n", attempt-1, delay.Seconds())
+			time.Sleep(delay)
+		}
+
+		fmt.Printf("🤖 正在请求LLM响应... (尝试 %d/%d)\n", attempt, g.maxRetryAttempts)
+		response, err := g.client.GenerateText(prompt, options)
+
+		if err == nil {
+			if attempt > 1 {
+				fmt.Printf("✅ LLM重试成功！\n")
+			}
+			return response, nil
+		}
+
+		lastErr = err
+		fmt.Printf("❌ LLM请求失败 (尝试 %d/%d): %v\n", attempt, g.maxRetryAttempts, err)
+
+		// 指数退避，但不超过最大延迟
+		delay = time.Duration(float64(delay) * 1.5)
+		if delay > g.maxDelay {
+			delay = g.maxDelay
+		}
+	}
+
+	return "", fmt.Errorf("LLM请求在 %d 次尝试后失败: %v", g.maxRetryAttempts, lastErr)
+}
+
+// retryLLMGenerateSQL 带重试的SQL生成
+func (g *InteractiveGenerator) retryLLMGenerateSQL(prompt string, options llm.Options) (*llm.SQLResponse, error) {
+	var lastErr error
+	delay := g.initialDelay
+
+	for attempt := 1; attempt <= g.maxRetryAttempts; attempt++ {
+		if attempt > 1 {
+			fmt.Printf("🔄 第 %d 次重试LLM SQL生成，等待 %.1f 秒...\n", attempt-1, delay.Seconds())
+			time.Sleep(delay)
+		}
+
+		fmt.Printf("🤖 正在生成SQL... (尝试 %d/%d)\n", attempt, g.maxRetryAttempts)
+		response, err := g.client.GenerateSQL(prompt, options)
+
+		if err == nil {
+			if attempt > 1 {
+				fmt.Printf("✅ LLM SQL生成重试成功！\n")
+			}
+			return response, nil
+		}
+
+		lastErr = err
+		fmt.Printf("❌ LLM SQL生成失败 (尝试 %d/%d): %v\n", attempt, g.maxRetryAttempts, err)
+
+		// 指数退避，但不超过最大延迟
+		delay = time.Duration(float64(delay) * 1.5)
+		if delay > g.maxDelay {
+			delay = g.maxDelay
+		}
+	}
+
+	return nil, fmt.Errorf("LLM SQL生成在 %d 次尝试后失败: %v", g.maxRetryAttempts, lastErr)
 }
 
 // parseLLMResponse 解析 LLM 响应
