@@ -1,2 +1,0 @@
-SELECT e.employee_id FROM employees e JOIN attendance_records a ON e.employee_id = a.employee_id JOIN departments d ON e.department_id = d.department_id WHERE d.name = '客户服务部' AND a.date = '2024-10-13' AND (strftime('%s', a.check_out) - strftime('%s', a.check_in)) > 15 * 3600;
-SELECT e.name FROM employees e INNER JOIN attendance_records a ON e.employee_id = a.employee_id WHERE e.university = '清华大学' AND a.date = '2024-10-11' AND a.check_in > '09:00';
