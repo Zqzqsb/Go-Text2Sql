@@ -76,7 +76,7 @@ func TestCSpiderDataset(t *testing.T) {
 		return
 	}
 
-	t.Logf("LLM客户端: 提供商=%s, 模型=%s\n", 
+	t.Logf("LLM客户端: 提供商=%s, 模型=%s\n",
 		client.Provider(), client.ModelName())
 
 	// 设置选项
@@ -112,22 +112,22 @@ func TestCSpiderDataset(t *testing.T) {
 				continue
 			}
 		}
-		
+
 		exampleID := int(id)
-		
+
 		if exampleID == targetID {
 			found = true
 			t.Logf("找到目标样例 ID=%d\n", targetID)
-			
+
 			// 测试样例
 			result := testExample(t, client, options, ds, example)
-			
+
 			// 输出结果
 			printTestResult(t, result)
-			
+
 			// 保存结果
 			saveResult(t, result, resultsDir)
-			
+
 			break
 		}
 	}
@@ -135,28 +135,28 @@ func TestCSpiderDataset(t *testing.T) {
 	// 如果没有找到目标样例，测试前几个
 	if !found {
 		t.Logf("未找到目标样例 ID=%d，将测试前%d个样例\n", targetID, maxSamples)
-		
+
 		count := 0
 		var results []TestResult
-		
+
 		for _, example := range testExamples {
 			if count >= maxSamples {
 				break
 			}
-			
+
 			// 测试样例
 			result := testExample(t, client, options, ds, example)
 			results = append(results, result)
-			
+
 			// 输出结果
 			printTestResult(t, result)
-			
+
 			// 保存结果
 			saveResult(t, result, resultsDir)
-			
+
 			count++
 		}
-		
+
 		// 保存所有结果
 		saveAllResults(t, results, resultsDir)
 	}
@@ -173,11 +173,11 @@ func testExample(t *testing.T, client llm.LLM, options llm.Options, ds *dataset.
 		// 简单地使用0作为默认ID
 		id = 0
 	}
-	
+
 	question := example["question"].(string)
 	dbName := example["db_id"].(string)
 	query := example["query"].(string)
-	
+
 	result := TestResult{
 		ID:          id,
 		DBName:      dbName,
@@ -185,9 +185,9 @@ func testExample(t *testing.T, client llm.LLM, options llm.Options, ds *dataset.
 		GroundTruth: query,
 		Metadata:    make(map[string]interface{}),
 	}
-	
+
 	t.Logf("处理样例 ID=%d, DB=%s\n", id, dbName)
-	
+
 	// 加载数据库Schema
 	dbPath := filepath.Join(ds.DBDir, dbName)
 	dbSchema, err := schema.LoadSchema(dbPath)
@@ -217,18 +217,18 @@ func testExample(t *testing.T, client llm.LLM, options llm.Options, ds *dataset.
 		}
 		t.Logf("使用模拟的Schema继续测试\n")
 	}
-	
+
 	// 格式化Schema为提示
 	schemaPrompt := schema.FormatSchemaForPrompt(dbSchema)
-	
+
 	// 格式化提示
-	prompt := utils.FormatPrompt(question, schemaPrompt)
-	
+	prompt := utils.FormatPrompt(question, schemaPrompt, "sqlite")
+
 	// 向LLM发送请求
 	startTime := time.Now()
 	response, err := client.GenerateSQL(prompt, options)
 	elapsedTime := time.Since(startTime)
-	
+
 	if err != nil {
 		t.Logf("向LLM发送请求失败: %v\n", err)
 		result.Metadata["error"] = err.Error()
@@ -241,7 +241,7 @@ func testExample(t *testing.T, client llm.LLM, options llm.Options, ds *dataset.
 		result.Metadata["total_tokens"] = 0
 		return result
 	}
-	
+
 	// 设置结果
 	result.Pred = response.Response
 	result.Thinking = response.Thinking
@@ -249,7 +249,7 @@ func testExample(t *testing.T, client llm.LLM, options llm.Options, ds *dataset.
 	result.Metadata["prompt_tokens"] = response.PromptTokens
 	result.Metadata["response_tokens"] = response.ResponseTokens
 	result.Metadata["total_tokens"] = response.TotalTokens
-	
+
 	return result
 }
 
@@ -258,11 +258,11 @@ func printTestResult(t *testing.T, result TestResult) {
 	t.Logf("\n问题: %s\n", result.Question)
 	t.Logf("生成的SQL: %s\n", result.Pred)
 	t.Logf("标准SQL: %s\n", result.GroundTruth)
-	
+
 	if result.Thinking != "" {
 		t.Logf("\n思考过程:\n%s\n", result.Thinking)
 	}
-	
+
 	// 检查Metadata中是否有执行时间
 	if execTime, ok := result.Metadata["execution_time"]; ok {
 		switch v := execTime.(type) {
@@ -274,12 +274,12 @@ func printTestResult(t *testing.T, result TestResult) {
 			t.Logf("执行时间: %v秒\n", v)
 		}
 	}
-	
+
 	// 检查Metadata中是否有Token信息
 	if promptTokens, ok := result.Metadata["prompt_tokens"]; ok {
 		// 安全地处理不同类型
 		var promptTokensInt, responseTokensInt, totalTokensInt int
-		
+
 		switch v := promptTokens.(type) {
 		case float64:
 			promptTokensInt = int(v)
@@ -289,12 +289,12 @@ func printTestResult(t *testing.T, result TestResult) {
 			t.Logf("提示tokens类型不支持: %T", v)
 			return
 		}
-		
+
 		responseTokens, ok := result.Metadata["response_tokens"]
 		if !ok {
 			return
 		}
-		
+
 		switch v := responseTokens.(type) {
 		case float64:
 			responseTokensInt = int(v)
@@ -304,12 +304,12 @@ func printTestResult(t *testing.T, result TestResult) {
 			t.Logf("响应tokens类型不支持: %T", v)
 			return
 		}
-		
+
 		totalTokens, ok := result.Metadata["total_tokens"]
 		if !ok {
 			return
 		}
-		
+
 		switch v := totalTokens.(type) {
 		case float64:
 			totalTokensInt = int(v)
@@ -319,8 +319,8 @@ func printTestResult(t *testing.T, result TestResult) {
 			t.Logf("总tokens类型不支持: %T", v)
 			return
 		}
-		
-		t.Logf("Token使用: 提示=%d, 响应=%d, 总计=%d\n", 
+
+		t.Logf("Token使用: 提示=%d, 响应=%d, 总计=%d\n",
 			promptTokensInt, responseTokensInt, totalTokensInt)
 	}
 }
@@ -329,21 +329,21 @@ func printTestResult(t *testing.T, result TestResult) {
 func saveResult(t *testing.T, result TestResult, resultsDir string) {
 	// 创建结果文件
 	resultFile := filepath.Join(resultsDir, fmt.Sprintf("result_%d.json", result.ID))
-	
+
 	// 序列化结果
 	resultJSON, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		t.Logf("序列化结果失败: %v\n", err)
 		return
 	}
-	
+
 	// 写入文件
 	err = os.WriteFile(resultFile, resultJSON, 0644)
 	if err != nil {
 		t.Logf("写入结果文件失败: %v\n", err)
 		return
 	}
-	
+
 	t.Logf("结果已保存到 %s\n", resultFile)
 }
 
@@ -351,20 +351,20 @@ func saveResult(t *testing.T, result TestResult, resultsDir string) {
 func saveAllResults(t *testing.T, results []TestResult, resultsDir string) {
 	// 创建结果文件
 	resultFile := filepath.Join(resultsDir, "results.json")
-	
+
 	// 序列化结果
 	resultJSON, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {
 		t.Logf("序列化结果失败: %v\n", err)
 		return
 	}
-	
+
 	// 写入文件
 	err = os.WriteFile(resultFile, resultJSON, 0644)
 	if err != nil {
 		t.Logf("写入结果文件失败: %v\n", err)
 		return
 	}
-	
+
 	t.Logf("所有结果已保存到 %s\n", resultFile)
 }

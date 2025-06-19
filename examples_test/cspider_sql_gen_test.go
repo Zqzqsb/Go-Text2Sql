@@ -76,7 +76,7 @@ func TestCSpiderSQLGen(t *testing.T) {
 		return
 	}
 
-	t.Logf("LLM客户端: 提供商=%s, 模型=%s\n", 
+	t.Logf("LLM客户端: 提供商=%s, 模型=%s\n",
 		client.Provider(), client.ModelName())
 
 	// 设置选项
@@ -112,19 +112,19 @@ func TestCSpiderSQLGen(t *testing.T) {
 				continue
 			}
 		}
-		
+
 		exampleID := int(id)
-		
+
 		if exampleID == targetID {
 			found = true
 			t.Logf("找到目标样例 ID=%d\n", targetID)
-			
+
 			// 生成SQL
 			result := generateSQL(t, client, options, ds, example)
-			
+
 			// 输出结果
 			printSQLResult(t, result)
-			
+
 			break
 		}
 	}
@@ -132,25 +132,25 @@ func TestCSpiderSQLGen(t *testing.T) {
 	// 如果没有找到目标样例，测试前几个
 	if !found {
 		t.Logf("未找到目标样例 ID=%d，将测试前%d个样例\n", targetID, maxSamples)
-		
+
 		count := 0
 		var results []SQLResult
-		
+
 		for _, example := range testExamples {
 			if count >= maxSamples {
 				break
 			}
-			
+
 			// 生成SQL
 			result := generateSQL(t, client, options, ds, example)
 			results = append(results, result)
-			
+
 			// 输出结果
 			printSQLResult(t, result)
-			
+
 			count++
 		}
-		
+
 		// 生成Spider格式的预测文件
 		generateSpiderFormat(t, results)
 	}
@@ -167,11 +167,11 @@ func generateSQL(t *testing.T, client llm.LLM, options llm.Options, ds *dataset.
 		// 简单地使用0作为默认ID
 		id = 0
 	}
-	
+
 	question := example["question"].(string)
 	dbName := example["db_id"].(string)
 	query := example["query"].(string)
-	
+
 	result := SQLResult{
 		ID:          id,
 		DBName:      dbName,
@@ -179,9 +179,9 @@ func generateSQL(t *testing.T, client llm.LLM, options llm.Options, ds *dataset.
 		GroundTruth: query,
 		Metadata:    make(map[string]interface{}),
 	}
-	
+
 	t.Logf("处理样例 ID=%d, DB=%s\n", id, dbName)
-	
+
 	// 加载数据库Schema
 	dbPath := filepath.Join(ds.DBDir, dbName)
 	dbSchema, err := schema.LoadSchema(dbPath)
@@ -211,18 +211,18 @@ func generateSQL(t *testing.T, client llm.LLM, options llm.Options, ds *dataset.
 		}
 		t.Logf("使用模拟的Schema继续测试\n")
 	}
-	
+
 	// 格式化Schema为提示
 	schemaPrompt := schema.FormatSchemaForPrompt(dbSchema)
-	
+
 	// 格式化提示
-	prompt := utils.FormatPrompt(question, schemaPrompt)
-	
+	prompt := utils.FormatPrompt(question, schemaPrompt, "sqlite")
+
 	// 向LLM发送请求
 	startTime := time.Now()
 	response, err := client.GenerateSQL(prompt, options)
 	elapsedTime := time.Since(startTime)
-	
+
 	if err != nil {
 		t.Logf("向LLM发送请求失败: %v\n", err)
 		result.Metadata["error"] = err.Error()
@@ -235,7 +235,7 @@ func generateSQL(t *testing.T, client llm.LLM, options llm.Options, ds *dataset.
 		result.Metadata["total_tokens"] = 0
 		return result
 	}
-	
+
 	// 设置结果
 	result.Pred = response.Response
 	result.Thinking = response.Thinking
@@ -243,7 +243,7 @@ func generateSQL(t *testing.T, client llm.LLM, options llm.Options, ds *dataset.
 	result.Metadata["prompt_tokens"] = response.PromptTokens
 	result.Metadata["response_tokens"] = response.ResponseTokens
 	result.Metadata["total_tokens"] = response.TotalTokens
-	
+
 	return result
 }
 
@@ -252,11 +252,11 @@ func printSQLResult(t *testing.T, result SQLResult) {
 	t.Logf("\n问题: %s\n", result.Question)
 	t.Logf("生成的SQL: %s\n", result.Pred)
 	t.Logf("标准SQL: %s\n", result.GroundTruth)
-	
+
 	if result.Thinking != "" {
 		t.Logf("\n思考过程:\n%s\n", result.Thinking)
 	}
-	
+
 	// 检查Metadata中是否有执行时间
 	if execTime, ok := result.Metadata["execution_time"]; ok {
 		switch v := execTime.(type) {
@@ -268,12 +268,12 @@ func printSQLResult(t *testing.T, result SQLResult) {
 			t.Logf("执行时间: %v秒\n", v)
 		}
 	}
-	
+
 	// 检查Metadata中是否有Token信息
 	if promptTokens, ok := result.Metadata["prompt_tokens"]; ok {
 		// 安全地处理不同类型
 		var promptTokensInt, responseTokensInt, totalTokensInt int
-		
+
 		switch v := promptTokens.(type) {
 		case float64:
 			promptTokensInt = int(v)
@@ -283,12 +283,12 @@ func printSQLResult(t *testing.T, result SQLResult) {
 			t.Logf("提示tokens类型不支持: %T", v)
 			return
 		}
-		
+
 		responseTokens, ok := result.Metadata["response_tokens"]
 		if !ok {
 			return
 		}
-		
+
 		switch v := responseTokens.(type) {
 		case float64:
 			responseTokensInt = int(v)
@@ -298,12 +298,12 @@ func printSQLResult(t *testing.T, result SQLResult) {
 			t.Logf("响应tokens类型不支持: %T", v)
 			return
 		}
-		
+
 		totalTokens, ok := result.Metadata["total_tokens"]
 		if !ok {
 			return
 		}
-		
+
 		switch v := totalTokens.(type) {
 		case float64:
 			totalTokensInt = int(v)
@@ -313,11 +313,11 @@ func printSQLResult(t *testing.T, result SQLResult) {
 			t.Logf("总tokens类型不支持: %T", v)
 			return
 		}
-		
-		t.Logf("Token使用: 提示=%d, 响应=%d, 总计=%d\n", 
+
+		t.Logf("Token使用: 提示=%d, 响应=%d, 总计=%d\n",
 			promptTokensInt, responseTokensInt, totalTokensInt)
 	}
-	
+
 	t.Log(strings.Repeat("-", 80))
 }
 
@@ -327,12 +327,12 @@ func generateSpiderFormat(t *testing.T, results []SQLResult) {
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].ID < results[j].ID
 	})
-	
+
 	// 生成SQL语句列表
 	var sqlLines []string
 	for _, result := range results {
 		sqlLines = append(sqlLines, result.Pred)
 	}
-	
+
 	t.Logf("Spider格式预测文件已生成，包含 %d 条SQL语句\n", len(sqlLines))
 }
