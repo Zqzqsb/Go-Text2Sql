@@ -45,11 +45,11 @@ func ParseDBType(dbType string) DBType {
 
 // InputResult 表示输入的SQL结果结构
 type InputResult struct {
-	ID        int    `json:"idx"`
-	DBName    string `json:"db_id"` // 匹配JSON中的db_id字段
+	ID        int    `json:"id"`
+	DBName    string `json:"db_name"`
 	Question  string `json:"question"`
-	GTSQL     string `json:"ground_truth"`
-	PredSQL   string `json:"pred"`
+	GTSQL     string `json:"gt_sql"`
+	PredSQL   string `json:"pred_sql"`
 	Thinking  string `json:"thinking,omitempty"`
 	Ambiguous string `json:"ambiguous,omitempty"`
 }
@@ -97,13 +97,13 @@ type ErrorStatistics struct {
 	SyntaxErrorCount     int
 	ProjectionErrorCount int
 	DataErrorCount       int
-	RowErrorCount        int    // 专门用于行数错误统计
-	ReferenceErrorCount  int    // 参考答案有语法错误
-	ExecutionErrorCount  int    // 执行错误（预测SQL语法错误）
+	RowErrorCount        int // 专门用于行数错误统计
+	ReferenceErrorCount  int // 参考答案有语法错误
+	ExecutionErrorCount  int // 执行错误（预测SQL语法错误）
 	// 下面三个字段已不再使用，保留是为了向后兼容
-	OrderErrorCount      int
-	JoinErrorCount       int
-	ConditionErrorCount  int
-	OtherErrorCount      int
-	ErrorCounts          []ErrorCount
+	OrderErrorCount     int
+	JoinErrorCount      int
+	ConditionErrorCount int
+	OtherErrorCount     int
+	ErrorCounts         []ErrorCount
 }
