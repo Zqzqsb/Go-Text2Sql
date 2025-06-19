@@ -26,7 +26,7 @@ func GetModelConfig(modelName string) ModelConfig {
 	config := ModelConfig{
 		CanThink: true,
 	}
-	
+
 	// 根据模型名称设置特定配置
 	switch modelName {
 	case "gpt-3.5-turbo", "gpt-3.5-turbo-0125":
@@ -34,7 +34,7 @@ func GetModelConfig(modelName string) ModelConfig {
 	case "deepseek-r1", "deepseek-r1-250120", "gpt-4", "gpt-4-turbo":
 		config.CanThink = true
 	}
-	
+
 	return config
 }
 
@@ -46,31 +46,33 @@ type Message struct {
 
 // SQLResponse 表示SQL响应
 type SQLResponse struct {
-	Response      string
-	PromptTokens  int
+	Response       string
+	PromptTokens   int
 	ResponseTokens int
-	TotalTokens   int
-	Thinking      string
+	TotalTokens    int
+	Thinking       string
 }
 
 // Options 表示LLM请求选项
 type Options struct {
-	Temperature    float64
-	MaxTokens      int
-	DisableThinking bool
-	SystemPrompt   string
-	PreserveChineseTerms bool // 是否保留中文词汇不翻译
-	FieldsInfoType string      // 字段信息类型: "", "fields", 或 "description"
+	Temperature          float64
+	MaxTokens            int
+	DisableThinking      bool
+	SystemPrompt         string
+	PreserveChineseTerms bool   // 是否保留中文词汇不翻译
+	FieldsInfoType       string // 字段信息类型: "", "fields", 或 "description"
+	VerboseDebug         bool   // 是否输出详细的调试信息（prompt和响应）
 }
 
 // DefaultOptions 返回默认选项
 func DefaultOptions() Options {
 	return Options{
-		Temperature:    0.3,
-		MaxTokens:      2048,
-		DisableThinking: false,
-		SystemPrompt:   "请详细解释你的思考过程，然后给出最终的SQL查询。确保最终的SQL查询是单独一行，以分号结尾。",
-		PreserveChineseTerms: true, // 默认保留中文词汇不翻译
+		Temperature:          0.3,
+		MaxTokens:            2048,
+		DisableThinking:      false,
+		SystemPrompt:         "请详细解释你的思考过程，然后给出最终的SQL查询。确保最终的SQL查询是单独一行，以分号结尾。",
+		PreserveChineseTerms: true,  // 默认保留中文词汇不翻译
+		VerboseDebug:         false, // 默认不输出详细调试信息
 	}
 }
 
@@ -78,16 +80,16 @@ func DefaultOptions() Options {
 type LLM interface {
 	// GenerateSQL 生成SQL查询
 	GenerateSQL(prompt string, options Options) (*SQLResponse, error)
-	
+
 	// GenerateText 生成文本
 	GenerateText(prompt string, options Options) (string, error)
-	
+
 	// Chat 进行对话
 	Chat(messages []Message, options Options) (string, error)
-	
+
 	// Provider 返回提供商类型
 	Provider() Provider
-	
+
 	// ModelName 返回模型名称
 	ModelName() string
 }

@@ -90,18 +90,22 @@ func (c *OpenAIClient) GenerateSQL(prompt string, options Options) (*SQLResponse
 	}
 
 	// 调用Chat方法获取响应
-	fmt.Println("\n发送到LLM的提示:")
-	fmt.Println(prompt)
-	fmt.Println()
+	if options.VerboseDebug {
+		fmt.Println("\n发送到LLM的提示:")
+		fmt.Println(prompt)
+		fmt.Println()
+	}
 
 	content, err := c.sendChatRequest(messages, options)
 	if err != nil {
 		return nil, err
 	}
 
-	fmt.Println("\nLLM的原始响应内容:")
-	fmt.Println(content.Content)
-	fmt.Println()
+	if options.VerboseDebug {
+		fmt.Println("\nLLM的原始响应内容:")
+		fmt.Println(content.Content)
+		fmt.Println()
+	}
 
 	// 处理思考过程和SQL
 	var sqlResponse SQLResponse
