@@ -302,25 +302,6 @@ func (g *InteractiveGenerator) buildPrompt(question, schema, queryHistory string
 
 问题:
 %s`, dbTypeDesc, schema, question)
-
-	// 如果提供了字段信息，添加到提示中
-	if fieldsInfo.HasInfo {
-		if fieldsInfo.UseDescription {
-			prompt += `
-
-字段要求:
-` + fieldsInfo.Info
-		} else {
-			prompt += `
-
-返回字段:
-` + fieldsInfo.Info
-		}
-		prompt += `
-
-请确保返回的字段严格符合上述要求,**不多字段也不少字段**。`
-	}
-
 	// 添加查询历史（如果有）
 	if queryHistory != "" {
 		prompt += "\n\n查询历史:\n" + queryHistory
@@ -379,13 +360,31 @@ NEED_MORE: [true/false]
 2. 基于每次查询结果逐步构建更复杂的查询
 3. 确认关键信息后再生成最终SQL
 
-注意：每个查询最多返回%d行。`, remainingSteps, g.maxQueryRows)
+注意：每个<query/>查询最多返回%d行,<final/> sql 不受此限制(一定不要为 sql 添加 LIMIT 限制，除非问题里明确要求)。`, remainingSteps, g.maxQueryRows)
 	}
 
 	prompt += `
 
 要求：生成正确的SQL，语法正确，逻辑符合问题要求，以分号结尾。`
 
+	// 如果提供了字段信息，添加到提示中
+	if fieldsInfo.HasInfo {
+		if fieldsInfo.UseDescription {
+			prompt += `
+
+字段要求:
+` + fieldsInfo.Info
+		} else {
+			prompt += `
+
+返回字段:
+` + fieldsInfo.Info
+		}
+		prompt += `
+		
+请确保返回的字段严格符合上述要求,**不多字段也不少字段**。
+对于你返回的每个字段，都需要一个贴合语义的别名，所有字段不能够有相同的别名`
+	}
 	return prompt
 }
 
