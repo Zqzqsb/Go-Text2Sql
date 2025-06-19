@@ -189,11 +189,6 @@ func main() {
 	// 获取统计信息
 	stats := analyzer.GetStatistics()
 
-	// 生成汇总报告
-	if err := reporter.GenerateSummaryReport(stats, len(inputResults)); err != nil {
-		fmt.Printf("生成汇总报告失败: %v\n", err)
-	}
-
 	// 分类输出详细结果
 	fmt.Printf("\n开始分类输出分析结果...\n")
 	if err := classifier.ClassifyAndSaveResults(analysisResults); err != nil {
