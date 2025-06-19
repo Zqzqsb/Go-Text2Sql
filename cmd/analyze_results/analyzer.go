@@ -399,20 +399,21 @@ func (a *SQLAnalyzer) areResultsEquivalent(result1, result2 *ExecResult) (bool, 
 			len(headerToIndex1), len(headerToIndex2))
 	}
 
-	// 第四步：尝试两种匹配策略
+	// 第四步：尝试多种匹配策略
+	var convertedRows1, convertedRows2 [][]string
+	var matchingStrategy string
+
 	// 策略1：列名完全匹配（不考虑顺序）
-	columnsMatch := true
+	columnsExactMatch := true
 	for header := range headerToIndex1 {
 		if _, exists := headerToIndex2[header]; !exists {
-			columnsMatch = false
+			columnsExactMatch = false
 			break
 		}
 	}
 
-	var convertedRows1, convertedRows2 [][]string
-
-	if columnsMatch {
-		// 策略1：列名匹配，按列名对应
+	if columnsExactMatch {
+		matchingStrategy = "exact_column_names"
 		// 获取所有列名的统一顺序（按字母序排序）
 		sortedColumns := make([]string, 0, len(headerToIndex1))
 		for header := range headerToIndex1 {
@@ -452,8 +453,8 @@ func (a *SQLAnalyzer) areResultsEquivalent(result1, result2 *ExecResult) (bool, 
 			convertedRows2[i-1] = row
 		}
 	} else {
-		// 策略2：列名不匹配，但列数相同，使用智能列重排序
-		// 基于每列第一个数据元素的hash值进行重排序，避免笛卡尔积计算
+		// 策略2：智能列重排序，基于数据内容的特征匹配
+		matchingStrategy = "content_based_mapping"
 		convertedRows1 = make([][]string, dataRows1)
 		convertedRows2 = make([][]string, dataRows2)
 
@@ -470,7 +471,7 @@ func (a *SQLAnalyzer) areResultsEquivalent(result1, result2 *ExecResult) (bool, 
 			convertedRows1[i-1] = row
 		}
 
-		// 智能列重排序：基于列的特征值（第一行数据的hash）
+		// 智能列重排序：基于列的特征值（多行数据的hash）
 		mapping := findColumnMapping(result1, result2)
 
 		if mapping != nil {
@@ -488,10 +489,11 @@ func (a *SQLAnalyzer) areResultsEquivalent(result1, result2 *ExecResult) (bool, 
 				convertedRows2[i-1] = row
 			}
 		} else {
-			// 没有找到合理的映射，使用原始顺序
+			// 策略3：如果列数相同，尝试按位置直接比较（忽略列名）
+			matchingStrategy = "positional_comparison"
 			for i := 1; i <= dataRows2; i++ {
 				row := make([]string, len(headers2))
-				for j := 0; j < len(headers2); j++ {
+				for j := 0; j < len(headers2) && j < len(headers1); j++ {
 					if j < len(result2.Rows[i]) {
 						row[j] = result2.Rows[i][j]
 					} else {
@@ -522,17 +524,23 @@ func (a *SQLAnalyzer) areResultsEquivalent(result1, result2 *ExecResult) (bool, 
 
 	// 比较两个结果集的行集合
 	if len(rowStrings1) != len(rowStrings2) {
-		return false, "数据行数不匹配"
+		return false, fmt.Sprintf("数据行数不匹配 (策略: %s)", matchingStrategy)
 	}
 
 	// 检查每一行是否存在于另一个结果集中
 	for rowStr := range rowStrings1 {
 		if !rowStrings2[rowStr] {
-			// 如果是列名不匹配导致的数据不一致，给出更精确的错误信息
-			if !columnsMatch {
-				return false, "列名不匹配"
+			// 根据使用的匹配策略给出不同的错误信息
+			switch matchingStrategy {
+			case "exact_column_names":
+				return false, "数据不一致"
+			case "content_based_mapping":
+				return false, "列名不匹配且数据映射失败"
+			case "positional_comparison":
+				return false, "列名不匹配且按位置比较数据不一致"
+			default:
+				return false, "数据不一致"
 			}
-			return false, "数据不一致"
 		}
 	}
 
@@ -556,19 +564,19 @@ func findColumnMapping(result1, result2 *ExecResult) []int {
 
 	colCount := len(headers1)
 
-	// 为每列计算特征值（基于前几行数据的组合hash）
+	// 为每列计算特征值（基于更多行数据的组合hash）
 	features1 := make([]string, colCount)
 	features2 := make([]string, colCount)
 
-	// 使用前3行数据计算特征，避免单行数据的偶然性
-	maxRows := minInt(4, len(result1.Rows), len(result2.Rows)) // 包含header行，所以实际是前3行数据
+	// 使用更多行数据计算特征，提高匹配准确性
+	maxRows := minInt(11, len(result1.Rows), len(result2.Rows)) // 包含header行，所以实际是前10行数据
 
 	for col := 0; col < colCount; col++ {
 		// 计算标准SQL第col列的特征
 		var vals1 []string
 		for row := 1; row < maxRows; row++ {
 			if col < len(result1.Rows[row]) {
-				vals1 = append(vals1, result1.Rows[row][col])
+				vals1 = append(vals1, strings.TrimSpace(result1.Rows[row][col]))
 			}
 		}
 		features1[col] = strings.Join(vals1, ":")
@@ -577,7 +585,7 @@ func findColumnMapping(result1, result2 *ExecResult) []int {
 		var vals2 []string
 		for row := 1; row < maxRows; row++ {
 			if col < len(result2.Rows[row]) {
-				vals2 = append(vals2, result2.Rows[row][col])
+				vals2 = append(vals2, strings.TrimSpace(result2.Rows[row][col]))
 			}
 		}
 		features2[col] = strings.Join(vals2, ":")
@@ -590,21 +598,31 @@ func findColumnMapping(result1, result2 *ExecResult) []int {
 	// 为每个标准SQL列找到最匹配的预测SQL列
 	for i := 0; i < colCount; i++ {
 		bestMatch := -1
+		bestScore := 0.0
 
 		for j := 0; j < colCount; j++ {
 			if used[j] {
 				continue
 			}
 
-			// 检查特征是否匹配
-			if features1[i] == features2[j] {
+			// 计算特征匹配度
+			score := calculateFeatureSimilarity(features1[i], features2[j])
+
+			// 如果完全匹配，直接选择
+			if score >= 1.0 {
 				bestMatch = j
 				break
+			}
+
+			// 如果相似度足够高（阈值可调整），记录为候选
+			if score > 0.8 && score > bestScore {
+				bestMatch = j
+				bestScore = score
 			}
 		}
 
 		if bestMatch == -1 {
-			// 没有找到完全匹配的列，返回nil
+			// 没有找到合适的匹配列，返回nil
 			return nil
 		}
 
@@ -613,4 +631,36 @@ func findColumnMapping(result1, result2 *ExecResult) []int {
 	}
 
 	return mapping
+}
+
+// calculateFeatureSimilarity 计算两个特征字符串的相似度
+func calculateFeatureSimilarity(feature1, feature2 string) float64 {
+	if feature1 == feature2 {
+		return 1.0
+	}
+
+	// 如果其中一个为空，相似度为0
+	if feature1 == "" || feature2 == "" {
+		return 0.0
+	}
+
+	// 分割特征字符串为值数组
+	vals1 := strings.Split(feature1, ":")
+	vals2 := strings.Split(feature2, ":")
+
+	// 如果长度不同，相似度较低
+	if len(vals1) != len(vals2) {
+		return 0.0
+	}
+
+	// 计算匹配的值的数量
+	matchCount := 0
+	for i := 0; i < len(vals1) && i < len(vals2); i++ {
+		if vals1[i] == vals2[i] {
+			matchCount++
+		}
+	}
+
+	// 返回匹配率
+	return float64(matchCount) / float64(len(vals1))
 }
