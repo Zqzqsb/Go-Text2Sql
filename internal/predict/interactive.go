@@ -163,9 +163,6 @@ func (g *InteractiveGenerator) GenerateInteractiveSQL(
 			result.PredSQL = finalSQL
 			result.Thinking = response
 
-			fmt.Printf("🎯 LLM认为可以直接生成最终SQL:\n")
-			fmt.Printf("📄 最终SQL: %s\n", finalSQL)
-
 			// 记录最终步骤
 			result.Steps = append(result.Steps, InteractiveStep{
 				StepType:  "final",
@@ -198,14 +195,10 @@ func (g *InteractiveGenerator) GenerateInteractiveSQL(
 			}
 			fmt.Printf(strings.Repeat("└", 1) + strings.Repeat("─", 58) + strings.Repeat("┘", 1) + "\n")
 
-			finalResponse, err := g.client.GenerateSQL(finalPrompt, options)
+			_ , err := g.client.GenerateSQL(finalPrompt, options)
 			if err != nil {
 				fmt.Printf("❌ 生成最终 SQL 失败: %v\n", err)
 				result.PredSQL = "ERROR: 生成最终 SQL 失败"
-			} else {
-				fmt.Printf("🎯 最终SQL已生成: %s\n", finalResponse.Response)
-				result.PredSQL = finalResponse.Response
-				result.Thinking = finalResponse.Thinking
 			}
 			break
 		}
@@ -388,7 +381,7 @@ func (g *InteractiveGenerator) buildFinalPrompt(question, schema, queryHistory s
 		}
 		prompt += `
 
-请确保返回的字段严格符合上述要求。`
+请确保返回的字段严格符合上述要求,**不多字段也不少字段**。`
 	}
 
 	if queryHistory != "" {
