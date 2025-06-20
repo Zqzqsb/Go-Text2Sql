@@ -68,7 +68,6 @@ func main() {
 	targetID := flag.Int("id", -1, "目标样例ID")
 	useIndex := flag.Bool("use-index", true, "使用样例索引而不是ID")
 	disableThinking := flag.Bool("disable-thinking", false, "禁用思考过程")
-	preserveChineseTerms := flag.Bool("preserve-chinese", true, "保留中文词汇不翻译")
 	dbType := flag.String("db-type", "sqlite", "数据库类型 (sqlite, postgres)")
 	fieldsInfoType := flag.String("fields-info-type", "", "字段信息类型 (empty, fields, description)")
 	interactiveMode := flag.Bool("interactive", true, "启用交互式 SQL 生成模式")
@@ -148,7 +147,6 @@ func main() {
 	// 设置选项
 	options := factory.GetDefaultOptions()
 	options.DisableThinking = *disableThinking
-	options.PreserveChineseTerms = *preserveChineseTerms
 	options.FieldsInfoType = *fieldsInfoType
 	options.VerboseDebug = *verboseDebug
 

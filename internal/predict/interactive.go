@@ -375,7 +375,7 @@ NEED_MORE: [true/false]
    - 了解字段的取值范围: SELECT DISTINCT 字段名 FROM 表名 LIMIT 50
    - 检查数据分布: SELECT COUNT(*) FROM 表名 WHERE 条件
 2. 基于每次查询结果逐步构建更复杂的查询
-3. 确认关键信息后再生成最终SQL,需要小心谨慎,对于模糊信息不能妄加猜测。
+3. 确认关键信息后再生成最终SQL,需要小心谨慎,对于模糊信息不能妄加猜测。对于中文定义，如"失败","在职","地名",必须找到其实际存储值。
 
 注意：每个<query/>查询最多返回%d行,<final/> sql 不受此限制(一定不要为最终 sql 添加 LIMIT 限制，除非问题里明确要求)。`, remainingSteps, g.maxQueryRows)
 	}
