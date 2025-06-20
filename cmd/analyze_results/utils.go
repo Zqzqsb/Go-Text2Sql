@@ -28,6 +28,12 @@ func LoadInputFile(filePath string) ([]InputResult, error) {
 	// 按行读取JSONL文件
 	var results []InputResult
 	scanner := bufio.NewScanner(strings.NewReader(string(fileContent)))
+
+	// 设置更大的缓冲区以处理长JSON行 (10MB)
+	const maxCapacity = 30 * 1024 * 1024 // 30MB
+	buf := make([]byte, maxCapacity)
+	scanner.Buffer(buf, maxCapacity)
+
 	lineNum := 0
 	for scanner.Scan() {
 		lineNum++
@@ -106,13 +112,13 @@ func LoadResultsFromDirectory(dirPath string) ([]InputResult, error) {
 		}
 
 		// 只处理JSON文件且跳过隐藏文件
-		if !info.IsDir() && 
-		   (strings.HasSuffix(info.Name(), ".json") || strings.HasSuffix(info.Name(), ".jsonl")) && 
-		   !strings.HasPrefix(info.Name(), ".") {
+		if !info.IsDir() &&
+			(strings.HasSuffix(info.Name(), ".json") || strings.HasSuffix(info.Name(), ".jsonl")) &&
+			!strings.HasPrefix(info.Name(), ".") {
 			// 跳过分析结果文件和其它生成文件
-			if strings.Contains(info.Name(), ".analysis") || 
-			   strings.Contains(info.Name(), "report") || 
-			   strings.Contains(info.Name(), "summary") {
+			if strings.Contains(info.Name(), ".analysis") ||
+				strings.Contains(info.Name(), "report") ||
+				strings.Contains(info.Name(), "summary") {
 				fmt.Printf("跳过分析文件: %s\n", path)
 				return nil
 			}
@@ -125,7 +131,7 @@ func LoadResultsFromDirectory(dirPath string) ([]InputResult, error) {
 					fmt.Printf("加载.jsonl文件失败: %s, 错误: %v\n", path, err)
 					return nil
 				}
-				
+
 				// 添加新的结果，避免重复
 				for _, r := range batchResults {
 					if !processedIDs[r.ID] {
@@ -133,7 +139,7 @@ func LoadResultsFromDirectory(dirPath string) ([]InputResult, error) {
 						results = append(results, r)
 					}
 				}
-				return nil 
+				return nil
 			}
 
 			// 处理单个JSON文件
