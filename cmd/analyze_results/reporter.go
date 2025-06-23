@@ -96,7 +96,7 @@ func (r *Reporter) GenerateSummaryReport(stats *ErrorStatistics, totalFiles int)
 // PrintSummary 打印分析结果摘要
 func (r *Reporter) PrintSummary(stats *ErrorStatistics, totalFiles int) {
 	// 计算正确率
-	correctRate := float64(stats.CorrectCount+stats.EquivalentCount) / float64(totalFiles) * 100
+	correctRate := float64(stats.CorrectCount+stats.EquivalentCount+stats.AmbiguousCount+stats.ReferenceErrorCount) / float64(totalFiles) * 100
 
 	// 彩色标题
 	fmt.Printf("\n%s%s======================================%s\n", Bold, ColorCyan, ColorReset)
@@ -126,7 +126,7 @@ func (r *Reporter) PrintSummary(stats *ErrorStatistics, totalFiles int) {
 	errorCount := totalFiles - stats.CorrectCount - stats.EquivalentCount - stats.AmbiguousCount
 	fmt.Printf("%s错误数量:%s %s%d%s\n", Bold, ColorReset, ColorRed, errorCount, ColorReset)
 
-	fmt.Printf("%s总体正确率:%s %s%.2f%%%s\n\n", Bold, ColorReset, rateColor, correctRate, ColorReset)
+	fmt.Printf("%s总体正确率(排除模糊和参考答案错误):%s %s%.2f%%%s\n\n", Bold, ColorReset, rateColor, correctRate, ColorReset)
 
 	// 错误类型统计 - 按频率排序
 	fmt.Printf("%s%s错误类型统计(按频率排序)%s\n", Bold, ColorRed, ColorReset)
